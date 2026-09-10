@@ -546,7 +546,7 @@ Legend: **PASS** verified by an executed test or an observed run ·
 | Stale monitoring exposed, not counted | PASS | unit + integration: `displayState: STALE`, uptime unaffected |
 | Missing checks never counted as up or down | PASS | unit uptime tests + integration coverage test |
 | Edit/pause/delete while a job is queued | PASS | integration, four separate cases |
-| Graceful shutdown | PASS | observed: SIGTERM on both processes logged a clean stop |
+| Graceful shutdown | PASS | SIGTERM to each process produced a clean, logged stop (`api shutting down` → `api stopped`; `worker shutting down` → `worker stopped`), with the queue, Redis and Postgres handles released. The worker's wait-for-in-flight-jobs behaviour comes from BullMQ's `Worker.close()`; that specific case was not separately forced in a test. |
 | Retention cleanup | PASS | integration: checks, incidents, sessions, tokens; open incidents preserved |
 
 ### Email
