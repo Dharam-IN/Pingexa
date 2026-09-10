@@ -39,10 +39,13 @@ opens/closes incidents, emails alerts, and can publish a shareable status page.
   coverage and stale monitoring are surfaced explicitly.
 
 ### Alerts
-- Exactly one DOWN email per incident and one RECOVERY email when it closes
-  (DB unique constraint `(incidentId, kind)`).
+- At most one DOWN alert row per incident and one RECOVERY row when it closes
+  (DB unique constraint `(incidentId, kind)`). That constraint bounds alert
+  *intents*, not SMTP messages — delivery is at-least-once. See
+  `docs/DECISIONS.md` D17.
 - Sent to the verified account email, delivered by the worker via a queue with
-  bounded retries and persisted delivery state.
+  bounded retries (`MAIL_MAX_ATTEMPTS` SMTP transactions per alert, enforced from
+  the persisted row) and persisted delivery state.
 
 ### Public status page
 - One optional status page per user, unguessable 32-hex slug, explicit per-monitor opt-in.

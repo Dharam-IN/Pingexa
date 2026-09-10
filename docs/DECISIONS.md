@@ -129,14 +129,45 @@ is inspectable and resumable. Verification/reset mail is enqueued with BullMQ re
 but not mirrored into its own table: the user can always request another one, so
 persisting per-message state would add a table with no user-visible benefit.
 
-## D17 — Known SMTP crash window, stated rather than papered over
-The worker marks a notification `SENT` immediately after the SMTP transaction returns.
-If the process dies between the SMTP server accepting the message and that write, the
-retry will send a second copy of the same alert. Removing that window needs either an
-idempotency key the SMTP provider honours or a two-phase outbox with provider message
-ids, which V1 does not implement. Ordinary duplicates (queue redelivery, several
-workers, repeated failures inside one incident) are all prevented by the
-`(incidentId, kind)` constraint plus a conditional status transition.
+## D17 — Alert delivery is at-least-once, and the unique index does not change that
+This entry replaces an earlier, wrong framing. It used to read as though the
+`(incidentId, kind)` unique index made alert delivery effectively exactly-once
+apart from one crash window. It does not, and the distinction matters.
+
+**What the unique index actually guarantees.** At most one *notification row*
+per `(incident, kind)`. That is a statement about how many alert *intents* the
+database will hold — it is not a statement about how many SMTP messages leave
+the process for that row. Nothing in Postgres can bound that, because the send
+happens outside the transaction.
+
+**What bounds SMTP sends per row.** Three things, in order:
+1. A row already marked `SENT` is skipped without sending.
+2. The claim is a compare-and-set on the exact `attempts` value that was read
+   (see D19), so simultaneous handlers cannot both send.
+3. The attempt budget is taken from the row's persisted `attempts`, not from the
+   queue job's counter, so the total number of SMTP transactions for one alert
+   is bounded by `MAIL_MAX_ATTEMPTS` however many times the job is recreated.
+
+**Where a duplicate can still reach the mailbox.** Two windows, both inherent to
+SMTP without a provider-honoured idempotency key:
+* *Crash after accept.* The row is marked `SENT` after the SMTP transaction
+  returns. If the process dies between the server accepting the message and that
+  write, the row is still `PENDING` and the next attempt sends another copy.
+* *Ambiguous failure.* `send()` rejecting does not prove non-delivery. A socket
+  timeout or a dropped connection after `DATA` can mean the server accepted the
+  message and we never saw the `250`. The code treats every error as retryable,
+  which is the right default for an uptime alert — a duplicate "your site is
+  down" is far less harmful than a missed one — but it does mean an accepted-then
+  -unacknowledged message is sent again.
+
+So the honest statement is: **at most one alert row per incident and kind, and
+at most `MAIL_MAX_ATTEMPTS` SMTP transactions for that row, with at-least-once
+delivery semantics.** Closing the remaining windows needs a provider idempotency
+key or a two-phase outbox recording the provider's message id before committing
+`SENT`; V1 implements neither, and adding one is a feature, not a fix.
+
+Deliberately *not* prevented, because they are correct: a monitor that flaps
+produces several incidents, each with its own DOWN and RECOVERY pair.
 
 ## D18 — The public status page is `no-store`, not briefly cacheable
 The obvious optimisation for an unauthenticated page whose data changes every
@@ -167,3 +198,23 @@ introduces a stuck state — a worker that dies mid-send leaves a row nothing wi
 ever pick up without a reaper. With the `attempts` approach the same crash
 leaves the row `PENDING` with the attempt already counted, which the existing
 outbox pass retries and the attempt budget still bounds.
+
+
+## D20 — The retry budget belongs to the notification row, not to the queue job
+`deliverAlert` judged exhaustion from `options.attempt`, which the worker derives
+from BullMQ's `attemptsMade`. That counter restarts at 1 whenever a *new* job is
+created for the same row — precisely what the outbox pass does when the previous
+job has been trimmed by `removeOnFail`/`removeOnComplete`, or lost with Redis. So
+the budget reset on every re-enqueue: the row never reached `FAILED`, its
+persisted `attempts` column grew without being consulted, and one alert could in
+principle be re-sent without limit.
+
+Exhaustion is now judged from `max(job attempt, row.attempts + 1)`, and the
+outbox skips rows whose `attempts` already reached the budget. Together those
+bound the SMTP transactions for a single alert at `MAIL_MAX_ATTEMPTS` no matter
+what happens to the queue, which is what let D17 above be stated as a bound
+rather than a hope.
+
+Found while auditing the delivery claims for the handover, not by a failure in
+the field; two integration tests now pin it (a spent row is closed out without
+sending, and a row with one spent attempt resumes at attempt 2 rather than 1).

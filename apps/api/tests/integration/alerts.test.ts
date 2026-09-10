@@ -169,6 +169,53 @@ describe('alert delivery', () => {
     expect(stored.lastError).toContain('SMTP 550');
   });
 
+  it('honours the persisted attempt budget when a fresh job is created for the row', async () => {
+    // The outbox re-enqueues a stuck alert as a *new* BullMQ job, which starts
+    // at attemptsMade 0. If exhaustion were judged from the job's own counter,
+    // the budget would restart every time and one alert could be re-sent
+    // without limit. The budget belongs to the notification row.
+    const { notification } = await outageFixture('alertbudget@monitored.dev');
+    await prisma.notification.update({
+      where: { id: notification.id },
+      data: { attempts: 5, lastError: 'SMTP 421 service unavailable' },
+    });
+
+    const outcome = await handleEmailJob(
+      { kind: 'alert', notificationId: notification.id, notificationKind: 'DOWN' },
+      // A brand new job: attempt 1 of 5, as far as the queue is concerned.
+      { attempt: 1, maxAttempts: 5, send: recorder },
+    );
+
+    expect(outcome).toBe('failed_permanently');
+    // Nothing was sent, and the row is closed out rather than left PENDING for
+    // the outbox to pick up again.
+    expect(sent).toHaveLength(0);
+    const stored = await prisma.notification.findUniqueOrThrow({ where: { id: notification.id } });
+    expect(stored.status).toBe('FAILED');
+    expect(stored.attempts).toBe(5);
+  });
+
+  it('continues the budget from the row after a crash, rather than restarting it', async () => {
+    // One attempt was already spent (the crash window: SMTP accepted, the
+    // process died before the SENT write). A fresh job must count this as
+    // attempt 2, not attempt 1.
+    const { notification } = await outageFixture('alertresume@monitored.dev');
+    await prisma.notification.update({
+      where: { id: notification.id },
+      data: { attempts: 1 },
+    });
+
+    const outcome = await handleEmailJob(
+      { kind: 'alert', notificationId: notification.id, notificationKind: 'DOWN' },
+      { attempt: 1, maxAttempts: 5, send: recorder },
+    );
+
+    expect(outcome).toBe('sent');
+    const stored = await prisma.notification.findUniqueOrThrow({ where: { id: notification.id } });
+    expect(stored.status).toBe('SENT');
+    expect(stored.attempts).toBe(2);
+  });
+
   it('refuses to alert an unverified address', async () => {
     const { user, notification } = await outageFixture('alertunverified@monitored.dev');
     await prisma.user.update({ where: { id: user.id }, data: { emailVerifiedAt: null } });
@@ -241,6 +288,27 @@ describe('outbox reconciliation', () => {
     expect(requeued).toEqual([stuck.notification.id]);
     expect(requeued).not.toContain(fresh.notification.id);
     expect(requeued).not.toContain(done.notification.id);
+  });
+
+  it('does not re-enqueue an alert whose attempt budget is already spent', async () => {
+    // Without this filter the outbox would hand a spent row back to the queue
+    // for ever, which is the other half of the unbounded re-send path.
+    const spent = await outageFixture('outboxspent@monitored.dev');
+    await prisma.notification.update({
+      where: { id: spent.notification.id },
+      data: { attempts: 5, createdAt: new Date(Date.now() - 10 * 60 * 1000) },
+    });
+
+    const requeued: string[] = [];
+    const count = await reconcilePendingAlerts(
+      async (id) => {
+        requeued.push(id);
+      },
+      { maxAttempts: 5 },
+    );
+
+    expect(count).toBe(0);
+    expect(requeued).toEqual([]);
   });
 
   it('keeps going when one re-enqueue fails', async () => {

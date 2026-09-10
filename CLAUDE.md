@@ -91,8 +91,10 @@ instead. `uptimePercent` is `null`, not `0` or `100`, when nothing was recorded.
 **Never log or store a response body, a token, a password, or a session value.**
 The logger redacts by key name; do not defeat it by renaming a field.
 
-**Alerts go only to a verified account email**, and only one DOWN plus one
-RECOVERY per incident.
+**Alerts go only to a verified account email**, and at most one DOWN row plus one
+RECOVERY row per incident. That unique index bounds alert *intents*, not SMTP
+messages: delivery is at-least-once, bounded at `MAIL_MAX_ATTEMPTS` transactions
+per alert. Never describe it as exactly-once — see `docs/DECISIONS.md` D17.
 
 **The interval is 5 minutes.** `MONITOR_INTERVAL_SECONDS` exists so tests can
 run an accelerated schedule; the config loader refuses any other value when

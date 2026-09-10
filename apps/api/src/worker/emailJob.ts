@@ -110,6 +110,34 @@ async function deliverAlert(
 
   if (!notification) return 'skipped';
   if (notification.status === 'SENT') return 'skipped';
+
+  /*
+   * The retry budget belongs to the notification row, not to the queue job.
+   *
+   * `options.attempt` comes from BullMQ's `attemptsMade`, which restarts at 1
+   * every time a *new* job is created for the same row — which is exactly what
+   * the outbox pass does when the previous job was trimmed or lost with Redis.
+   * Judging exhaustion from the job alone therefore reset the budget on every
+   * re-enqueue, so one alert could be re-sent without limit and the row never
+   * reached FAILED. Taking the larger of the job's count and the row's persisted
+   * `attempts` bounds the total number of SMTP transactions per alert at
+   * `MAIL_MAX_ATTEMPTS`, whatever happens to the queue.
+   */
+  const effectiveAttempt = Math.max(options.attempt, notification.attempts + 1);
+  if (effectiveAttempt > options.maxAttempts) {
+    await prisma.notification.update({
+      where: { id: notification.id },
+      data: {
+        status: 'FAILED',
+        lastError: `Gave up after ${notification.attempts} delivery attempts`,
+      },
+    });
+    logger.error(
+      { notificationId: notification.id, attempts: notification.attempts },
+      'alert email budget exhausted; not sending again',
+    );
+    return 'failed_permanently';
+  }
   // Alerts go to the verified account email, only.
   if (notification.user.emailVerifiedAt === null) {
     await prisma.notification.update({
@@ -176,7 +204,7 @@ async function deliverAlert(
     return 'sent';
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const exhausted = options.attempt >= options.maxAttempts;
+    const exhausted = effectiveAttempt >= options.maxAttempts;
     await prisma.notification.update({
       where: { id: notification.id },
       data: {
@@ -188,7 +216,8 @@ async function deliverAlert(
     logger.error(
       {
         notificationId: notification.id,
-        attempt: options.attempt,
+        attempt: effectiveAttempt,
+        jobAttempt: options.attempt,
         maxAttempts: options.maxAttempts,
         exhausted,
         err: message,
@@ -212,13 +241,20 @@ async function deliverAlert(
  */
 export async function reconcilePendingAlerts(
   enqueue: (notificationId: string, kind: 'DOWN' | 'RECOVERY') => Promise<void>,
-  options: { minAgeMs?: number; limit?: number; now?: Date } = {},
+  options: { minAgeMs?: number; limit?: number; now?: Date; maxAttempts?: number } = {},
 ): Promise<number> {
   const now = options.now ?? new Date();
   const minAgeMs = options.minAgeMs ?? 60_000;
+  const maxAttempts = options.maxAttempts ?? env.MAIL_MAX_ATTEMPTS;
 
   const stuck = await prisma.notification.findMany({
-    where: { status: 'PENDING', createdAt: { lt: new Date(now.getTime() - minAgeMs) } },
+    where: {
+      status: 'PENDING',
+      createdAt: { lt: new Date(now.getTime() - minAgeMs) },
+      // A row whose budget is already spent must not be handed back to the
+      // queue; otherwise this pass would re-send it for ever.
+      attempts: { lt: maxAttempts },
+    },
     select: { id: true, kind: true },
     orderBy: { createdAt: 'asc' },
     take: options.limit ?? 100,

@@ -338,6 +338,20 @@ does not process bounce webhooks.
 the monitor detail page shows an explicit hint telling the user to monitor the
 final URL when the latest failure was a redirect.
 
+### Alert delivery semantics
+
+| Property | Guarantee |
+|---|---|
+| Alert rows per incident | **Exactly one** DOWN, and **exactly one** RECOVERY once it closes. Enforced by a unique index. |
+| SMTP transactions per alert row | **At most `MAIL_MAX_ATTEMPTS` (5)**. Enforced from the row's persisted `attempts`, so a re-created queue job cannot restart the budget. |
+| Delivery to the mailbox | **At least once.** A duplicate is possible if the worker dies between the SMTP accept and the `SENT` write, or if a send fails ambiguously (timeout after `DATA`) having actually been accepted. |
+| Simultaneous workers | Cannot both send: the claim is a compare-and-set on the exact `attempts` value read. |
+| Missed alerts | An alert that could not be enqueued stays `PENDING` and is re-enqueued by the outbox pass, so a Redis outage delays an alert rather than losing it. |
+| Permanent failure | After the budget is spent the row becomes `FAILED` with `lastError`, and is shown on the monitor detail page. Monitoring is unaffected. |
+
+The one thing not to claim: the unique index does **not** make delivery
+exactly-once. It bounds alert intents, not SMTP messages.
+
 ### Down and recovery
 
 * A new monitor is `PENDING` until its first completed check.
@@ -555,7 +569,7 @@ Legend: **PASS** verified by an executed test or an observed run ·
 |---|---|---|
 | Local delivery through Mailpit | PASS | observed for confirmation, reset and password-changed; read back by e2e |
 | Alert content and escaping | PASS | `tests/unit/templates.test.ts` |
-| Background delivery, bounded retries, persisted state | PASS | integration: attempts, `lastError`, `SENT`/`FAILED` transitions |
+| Background delivery, bounded retries, persisted state | PASS | integration: attempts, `lastError`, `SENT`/`FAILED` transitions, plus the budget being read from the row so a re-created job cannot restart it |
 | One sender when workers race | PASS | integration: 10 concurrent handlers → exactly 1 send, `attempts` = 1. This is where the fresh-setup run caught a real bug (see `docs/DECISIONS.md` D19): the original claim left the row `PENDING` during the send, so it excluded nobody. Fixed and re-verified over four consecutive runs. |
 | Outbox reconciliation re-enqueues stuck alerts | PASS | integration |
 | Email failure never breaks monitoring or loses an incident | PASS | integration |
@@ -642,13 +656,22 @@ surveyed.
 1. **Redirects are not followed.** Monitoring `http://example.com` when it 301s
    to HTTPS reports DOWN. This is deliberate (see `docs/DECISIONS.md` D7) and the
    UI tells the user to monitor the final URL, but it will surprise people.
-2. **The SMTP crash window.** A notification is marked `SENT` after the SMTP
-   transaction returns. If the worker dies in that instant, the retry sends a
-   second copy of the same alert. Every ordinary duplicate — queue redelivery,
-   several workers, repeated failures inside one incident — is prevented by the
-   `(incidentId, kind)` unique index plus a conditional status transition.
-   Closing the last window needs a provider idempotency key or a two-phase
-   outbox keyed on the provider's message id.
+2. **Alert delivery is at-least-once, not exactly-once.** The
+   `(incidentId, kind)` unique index bounds how many alert *rows* exist — one
+   DOWN and one RECOVERY per incident — and nothing more. It says nothing about
+   how many SMTP messages leave the process for a row, because the send happens
+   outside the transaction. What bounds the sends is: a `SENT` row is skipped, a
+   compare-and-set claim stops simultaneous handlers, and the attempt budget is
+   read from the row's persisted `attempts`, so a single alert causes at most
+   `MAIL_MAX_ATTEMPTS` (5) SMTP transactions however often the queue job is
+   recreated. Two windows can still put a second copy in the mailbox: the worker
+   dying between the SMTP server accepting the message and the `SENT` write, and
+   an ambiguous failure where a socket timeout after `DATA` means the message was
+   accepted but the `250` never arrived. Both are retried on purpose — a
+   duplicate "your site is down" is less harmful than a missed one. Closing them
+   needs a provider-honoured idempotency key or a two-phase outbox recording the
+   provider's message id before committing `SENT`; V1 implements neither, and
+   adding one is a feature rather than a fix. See `docs/DECISIONS.md` D17.
 3. **A Redis flush loses at most one check per monitor.** `nextCheckAt` has
    already advanced for the in-flight slot, so that slot is skipped rather than
    retried. It shows up as reduced coverage, never as downtime.
