@@ -83,7 +83,8 @@ export function Button({
       aria-busy={loading || undefined}
       className={clsx(
         'inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors',
-        'disabled:cursor-not-allowed',
+        // A wrapped button label looks broken; let the surrounding layout wrap instead.
+        'whitespace-nowrap disabled:cursor-not-allowed',
         size === 'sm' ? 'px-3 py-1.5 text-sm' : 'px-4 py-2.5 text-sm',
         BUTTON_VARIANTS[variant],
         className,

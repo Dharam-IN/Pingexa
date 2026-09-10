@@ -154,8 +154,12 @@ export function MonitorDetailPage() {
         <Alert tone="error" title="This monitor is down">
           <p>{monitor.lastFailureReason}</p>
           <p className="mt-1">
-            Confirmed after {monitor.consecutiveFailures} consecutive failed checks. You have been
-            emailed once about this outage, and will be emailed once more when it recovers.
+            Confirmed after 3 consecutive failed checks
+            {monitor.consecutiveFailures > 3
+              ? `; ${monitor.consecutiveFailures} have now failed in a row`
+              : ''}
+            . You have been emailed once about this outage, and will be emailed once more when it
+            recovers.
           </p>
         </Alert>
       ) : null}

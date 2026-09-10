@@ -566,10 +566,10 @@ Legend: **PASS** verified by an executed test or an observed run ·
 
 | Item | Status | Evidence |
 |---|---|---|
-| Scheme, credential, port, hostname validation | PASS | `tests/unit/urlGuard.test.ts`, ~30 cases |
+| Scheme, credential, port, hostname validation | PASS | `tests/unit/urlGuard.test.ts`, ~35 cases |
 | IPv4 + IPv6 blocking incl. metadata, IPv4-mapped, NAT64, 6to4 | PASS | `tests/unit/ipRanges.test.ts`, ~45 cases |
 | DNS validated; mixed public/private hostname refused | PASS | unit |
-| Connection pinned; rebinding refused | PASS | unit: pinned lookup returns only approved addresses and refuses another hostname |
+| Connection pinned; rebinding refused | PASS | unit: the pinned lookup returns only approved addresses and refuses another hostname. Proved end-to-end too: a check against a hostname that **does not exist in DNS** succeeds when the guard maps it to the fixture server's address, which can only happen if the socket used the guard's answer; and a request whose only approved address is the wrong family reaches the network not at all. |
 | Redirects not followed; 3xx classified and documented | PASS | unit: one request only, target not leaked |
 | TLS verification enforced | PASS | not configurable; asserted by code review and the absence of any flag |
 | Bounded time, size, concurrency | PASS | unit: timeout inside budget, oversized body refused |
@@ -595,7 +595,7 @@ Legend: **PASS** verified by an executed test or an observed run ·
 | Incident history with documented semantics | PASS | the three timestamps are labelled in the UI |
 | No fake metrics, testimonials or dead controls | PASS | e2e asserts no social-proof copy; every control is wired |
 | Seed/demo data clearly separate | PASS | `[DEMO]` prefix, dedicated account, refuses production |
-| Responsive | PASS | e2e runs a mobile project (Pixel 7) and asserts no horizontal overflow |
+| Responsive | PASS | e2e runs a mobile project (Pixel 7) and asserts no horizontal overflow; every page was also screenshotted at 1280px and at phone width, in light and dark, and reviewed |
 | Accessible forms | PASS | every input is label+hint+error wired via ids; switches use `role="switch"` |
 
 ### Build and fresh setup

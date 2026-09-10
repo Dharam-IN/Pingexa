@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { runHttpCheck } from '../../src/monitoring/httpCheck.js';
+import { createUrlGuard } from '../../src/monitoring/urlGuard.js';
 import { loopbackGuard, startFixtureServer, type FixtureServer } from '../helpers/fixtureServer.js';
 
 let server: FixtureServer | undefined;
@@ -174,5 +175,56 @@ describe('http check — guard failures never become network traffic', () => {
     if (result.outcome !== 'DOWN') return;
     expect(result.failureKind).toBe('INVALID_URL');
     expect(result.failureReason).not.toContain('secret');
+  });
+});
+
+describe('http check — the pinned lookup really drives the socket', () => {
+  it('connects to the address the guard approved, for a hostname real DNS cannot resolve', async () => {
+    // This is the load-bearing proof that connection pinning is wired to the
+    // socket rather than merely computed and discarded.
+    //
+    // `pinned.monitored.dev` does not exist in DNS. The guard claims it resolves
+    // to 127.0.0.1, where the fixture server is listening. If undici ignored the
+    // guard's `lookup` and resolved the name itself, the connect would fail with
+    // ENOTFOUND and this check would come back DOWN. It comes back UP, and the
+    // fixture server sees the request, which can only happen if the socket used
+    // the address the guard handed it.
+    server = await startFixtureServer({ status: 200 });
+    const pinningGuard = createUrlGuard({
+      allowPrivateAddresses: true,
+      allowNonStandardPorts: true,
+      resolve: async () => [{ address: '127.0.0.1', family: 4 }],
+    });
+
+    const result = await runHttpCheck(`http://pinned.monitored.dev:${server.port}/`, {
+      guard: pinningGuard,
+      timeoutMs: 2_000,
+    });
+
+    expect(result.outcome).toBe('UP');
+    expect(server.requestCount).toBe(1);
+    // And the request really was made under that hostname, not rewritten to the IP.
+    expect(server.lastHeaders['host']).toBe(`pinned.monitored.dev:${server.port}`);
+  });
+
+  it('fails closed when the socket asks for an address family the guard did not approve', async () => {
+    // The guard approves only an IPv6 address; the request is to a host that
+    // therefore has no usable IPv4 answer. Nothing should reach the network.
+    server = await startFixtureServer({ status: 200 });
+    const ipv6OnlyGuard = createUrlGuard({
+      allowPrivateAddresses: true,
+      allowNonStandardPorts: true,
+      resolve: async () => [{ address: '::1', family: 6 }],
+    });
+
+    const result = await runHttpCheck(`http://pinned6.monitored.dev:${server.port}/`, {
+      guard: ipv6OnlyGuard,
+      timeoutMs: 2_000,
+    });
+
+    // Either it could not connect at all, or it was refused outright. What must
+    // not happen is a successful request to something the guard did not approve.
+    expect(result.outcome).toBe('DOWN');
+    expect(server.requestCount).toBe(0);
   });
 });

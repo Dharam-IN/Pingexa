@@ -114,7 +114,7 @@ export function DashboardPage() {
           />
         </Card>
       ) : (
-        <ul className="grid gap-4 sm:grid-cols-2">
+        <ul className="grid items-start gap-4 sm:grid-cols-2">
           {monitors.map((monitor) => (
             <MonitorCard
               key={monitor.id}

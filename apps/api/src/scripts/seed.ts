@@ -16,7 +16,7 @@ import { env, isProduction } from '../config/env.js';
 import { prisma } from '../lib/prisma.js';
 import { hashPassword } from '../lib/crypto.js';
 import { generateSlug } from '../lib/crypto.js';
-import { addMs, DAY_MS, MINUTE_MS } from '../lib/time.js';
+import { addMs, DAY_MS, HOUR_MS, MINUTE_MS } from '../lib/time.js';
 import { createUrlGuard } from '../monitoring/urlGuard.js';
 
 const DEMO_PREFIX = '[DEMO]';
@@ -38,6 +38,17 @@ interface SeedMonitorSpec {
   readonly story: 'healthy' | 'recovered-outage' | 'currently-down';
 }
 
+/*
+ * The URLs are chosen so a *live* check agrees with the synthetic story. The
+ * worker keeps checking these monitors after seeding, and if a real result
+ * contradicted the seeded state it would immediately overwrite it — a monitor
+ * seeded as "currently down" pointing at a URL that answers 200 flips to up
+ * within five minutes, which makes the demo confusing rather than illustrative.
+ *
+ * `example.com` answers 200 at `/` and 404 at an unknown path, so:
+ *   healthy / recovered-outage -> a path that answers 200 (the outage is history)
+ *   currently-down            -> a path that answers 404 (the outage continues)
+ */
 const SPECS: readonly SeedMonitorSpec[] = [
   {
     name: `${DEMO_PREFIX} Marketing site`,
@@ -47,13 +58,13 @@ const SPECS: readonly SeedMonitorSpec[] = [
   },
   {
     name: `${DEMO_PREFIX} API endpoint`,
-    url: 'https://example.org/health',
+    url: 'https://example.com/?pingexa-demo=api',
     isPublic: true,
     story: 'recovered-outage',
   },
   {
     name: `${DEMO_PREFIX} Staging server`,
-    url: 'https://example.net/',
+    url: 'https://example.com/pingexa-demo-missing-page',
     isPublic: false,
     story: 'currently-down',
   },
@@ -104,7 +115,10 @@ async function main(): Promise<void> {
         url: approval.url,
         isPublic: spec.isPublic,
         intervalSeconds: env.MONITOR_INTERVAL_SECONDS,
-        createdAt: addMs(now, -8 * DAY_MS),
+        // Matches the 24 hours of history written below, so the 7-day window
+        // reports full coverage rather than flagging six days of "missing"
+        // checks for a monitor that did not exist then.
+        createdAt: addMs(now, -24 * HOUR_MS),
         state: 'PENDING',
         nextCheckAt: now,
       },

@@ -24,11 +24,15 @@ in `docker-compose.dev.yml`.
 |---|---|
 | `npm run lint` | clean |
 | `npm run typecheck` | clean (shared, api, web) |
-| `npm run test:unit` | **137 passed** (api) + **35 passed** (web) |
+| `npm run test:unit` | **139 passed** (api) + **35 passed** (web) |
 | `npm run test:integration` | **105 passed** against real Postgres + Redis |
 | `npm run test:e2e` | **42 passed** — 21 desktop-chromium + 21 mobile-chromium |
 | `npm run build` | clean (shared, api, web) |
 | `./scripts/verify-fresh-setup.sh` | passed — disposable database, migrations only, no schema drift, all four hand-written constraints present, built API booted and signed a user up, integration suite green |
+
+Screenshots of every page (light, dark, desktop and mobile) were captured and
+reviewed against the seeded demo account, which is how the four interface fixes
+below were found.
 
 ## Bugs found by verification and fixed
 
@@ -59,6 +63,16 @@ These are worth keeping, because each was found by a test rather than by reading
 5. **BullMQ 6 rejects `:` in a custom job id**, so every scheduled check silently
    failed to enqueue. Job ids now encode the slot as epoch milliseconds. Found
    by the first manual end-to-end run.
+6. **The demo seed contradicted itself once the worker ran.** Its monitors
+   pointed at URLs whose real responses disagreed with the story being
+   illustrated, so a monitor seeded as "currently down" flipped to up within
+   five minutes. Its URLs and `createdAt` now match the history it writes, so
+   live checks confirm the story instead of overwriting it. Found by reviewing a
+   screenshot of the seeded dashboard.
+7. **Interface polish found by screenshot review:** the sign-out button wrapped
+   onto two lines at phone width; dashboard cards stretched to the tallest in
+   their row; the DOWN banner conflated the three-failure confirmation threshold
+   with the current streak length.
 
 ## Blockers
 
