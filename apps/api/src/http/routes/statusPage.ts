@@ -141,9 +141,17 @@ publicStatusRouter.get(
       intervalSeconds: DEFAULT_MONITOR_INTERVAL_SECONDS,
     };
 
-    // Public and cacheable for a short time; the underlying data only changes
-    // every 5 minutes, and this endpoint is unauthenticated.
-    res.setHeader('Cache-Control', 'public, max-age=30');
+    /*
+     * Deliberately not cacheable.
+     *
+     * The obvious optimisation here is a short public cache, since the data only
+     * changes every five minutes. But the URL is the only access control on this
+     * page, so unpublishing it or replacing its slug has to take effect at once.
+     * Any shared or browser cache would keep serving a revoked page for the
+     * lifetime of the entry, which turns "stop publishing" into "stop publishing
+     * in a little while". Freshness of revocation beats saving a query.
+     */
+    res.setHeader('Cache-Control', 'no-store');
     res.status(200).json(body);
   }),
 );

@@ -28,7 +28,7 @@ import {
   setSessionCookie,
 } from '../cookies.js';
 import { asyncHandler } from '../middleware/errorHandler.js';
-import { authLimiter } from '../middleware/rateLimit.js';
+import { authLimiter, tokenLimiter } from '../middleware/rateLimit.js';
 import { requireAuth } from '../middleware/session.js';
 import { validateBody } from '../middleware/validate.js';
 
@@ -98,7 +98,7 @@ authRouter.get(
 
 authRouter.post(
   '/verify-email',
-  authLimiter,
+  tokenLimiter,
   validateBody(verifyEmailSchema),
   asyncHandler(async (req, res) => {
     const { token } = req.body as { token: string };
@@ -135,7 +135,7 @@ authRouter.post(
 
 authRouter.post(
   '/password-reset/confirm',
-  authLimiter,
+  tokenLimiter,
   validateBody(resetPasswordSchema),
   asyncHandler(async (req, res) => {
     const { token, password } = req.body as { token: string; password: string };

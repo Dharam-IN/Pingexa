@@ -142,10 +142,24 @@ async function deliverAlert(
       ? monitorDownMail(notification.user.email, context)
       : monitorRecoveredMail(notification.user.email, context);
 
-  // Claim the row so two workers racing on the same job produce one sender.
+  /*
+   * Claim the row, by optimistic concurrency on `attempts`.
+   *
+   * The obvious version of this — `WHERE status = 'PENDING'` with an
+   * `attempts: { increment: 1 }` — does not actually exclude anyone, because it
+   * leaves the row PENDING until the send finishes. Two workers both match the
+   * WHERE clause and both send. Matching on the exact `attempts` value we read
+   * fixes it: Postgres serialises the two UPDATEs, the first moves `attempts`
+   * from N to N+1, and the second's WHERE no longer matches, so it reports zero
+   * rows and backs out.
+   *
+   * A worker that dies mid-send leaves the row PENDING with `attempts` already
+   * advanced, which is what we want: the outbox pass picks it up and the attempt
+   * budget still counts down, so a permanently failing address cannot loop.
+   */
   const claimed = await prisma.notification.updateMany({
-    where: { id: notification.id, status: 'PENDING' },
-    data: { attempts: { increment: 1 } },
+    where: { id: notification.id, status: 'PENDING', attempts: notification.attempts },
+    data: { attempts: notification.attempts + 1 },
   });
   if (claimed.count === 0) return 'skipped';
 

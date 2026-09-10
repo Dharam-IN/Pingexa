@@ -1,0 +1,130 @@
+@import 'tailwindcss';
+
+/*
+ * Pingexa design tokens.
+ *
+ * One indigo brand colour, three state colours (up / down / unknown), and a
+ * neutral ramp. Everything else in the UI is built from these, so a state
+ * always looks the same wherever it appears — a card, a chart, a status page.
+ */
+@theme {
+  --color-brand-50: oklch(0.97 0.014 285);
+  --color-brand-100: oklch(0.94 0.03 285);
+  --color-brand-200: oklch(0.89 0.055 285);
+  --color-brand-300: oklch(0.81 0.09 285);
+  --color-brand-400: oklch(0.71 0.14 285);
+  --color-brand-500: oklch(0.62 0.19 285);
+  --color-brand-600: oklch(0.54 0.21 285);
+  --color-brand-700: oklch(0.47 0.19 285);
+  --color-brand-800: oklch(0.39 0.15 285);
+  --color-brand-900: oklch(0.32 0.11 285);
+
+  --color-up-50: oklch(0.96 0.03 165);
+  --color-up-500: oklch(0.66 0.15 165);
+  --color-up-600: oklch(0.56 0.14 165);
+  --color-up-700: oklch(0.45 0.11 165);
+
+  --color-down-50: oklch(0.96 0.025 25);
+  --color-down-500: oklch(0.62 0.2 25);
+  --color-down-600: oklch(0.55 0.21 25);
+  --color-down-700: oklch(0.46 0.18 25);
+
+  --color-warn-50: oklch(0.97 0.04 85);
+  --color-warn-500: oklch(0.75 0.14 85);
+  --color-warn-600: oklch(0.66 0.14 70);
+  --color-warn-700: oklch(0.52 0.12 70);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --surface: oklch(0.99 0.002 285);
+    --surface-raised: oklch(1 0 0);
+    --surface-sunken: oklch(0.97 0.004 285);
+    --border-subtle: oklch(0.91 0.006 285);
+    --text-strong: oklch(0.24 0.02 285);
+    --text-muted: oklch(0.52 0.015 285);
+  }
+
+  /*
+   * The dark palette follows the OS setting. There is no in-app theme switch:
+   * one fewer piece of state, and the OS preference is what people actually set.
+   */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface: oklch(0.19 0.012 285);
+      --surface-raised: oklch(0.23 0.014 285);
+      --surface-sunken: oklch(0.16 0.01 285);
+      --border-subtle: oklch(0.31 0.014 285);
+      --text-strong: oklch(0.96 0.004 285);
+      --text-muted: oklch(0.72 0.012 285);
+    }
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--surface);
+    color: var(--text-strong);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* A single visible focus treatment everywhere, including custom controls. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@utility surface {
+  background: var(--surface-raised);
+  border: 1px solid var(--border-subtle);
+}
+
+@utility text-muted {
+  color: var(--text-muted);
+}
+
+@utility text-strong {
+  color: var(--text-strong);
+}
+
+/* The "ping" motif: one slow ring, used sparingly on live UP states only. */
+@keyframes pingexa-ring {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.6;
+  }
+  70%,
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+@utility animate-ping-ring {
+  animation: pingexa-ring 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}

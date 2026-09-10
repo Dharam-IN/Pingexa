@@ -83,3 +83,17 @@ export async function startFixtureServer(
     },
   };
 }
+
+/**
+ * A guard with a stubbed resolver that maps every hostname to one fixed public
+ * address.
+ *
+ * Tests that create monitors through the domain layer use this so the suite does
+ * not depend on the machine being able to resolve a particular real hostname.
+ * Tests that exercise the HTTP endpoints deliberately use the strict production
+ * guard instead, with `example.com`, so the real policy is what gets tested;
+ * those cases need outbound DNS (but never outbound HTTP).
+ */
+export const stubDnsGuard: UrlGuard = createUrlGuard({
+  resolve: async () => [{ address: '93.184.215.14', family: 4 }],
+});

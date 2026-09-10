@@ -42,6 +42,7 @@ export const TEST_ENV: Record<string, string> = {
   SMTP_REJECT_UNAUTHORIZED: 'false',
   MAIL_FROM_ADDRESS: 'alerts@pingexa.local',
   MAIL_FROM_NAME: 'Pingexa Test',
+  TOKEN_RATE_LIMIT_MAX: '60',
   MONITOR_INTERVAL_SECONDS: '300',
   MONITOR_TIMEOUT_MS: '3000',
   SCHEDULER_TICK_MS: '1000',

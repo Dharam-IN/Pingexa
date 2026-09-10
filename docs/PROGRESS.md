@@ -2,87 +2,89 @@
 
 _Updated: 2026-09-10_
 
-## Where things stand
+## State: V1 scope complete and verified locally
 
 | Milestone | Status |
 |-----------|--------|
-| 1. Foundation, DB, config, auth | **Complete and verified** |
-| 2. Scheduler, worker, checks, incidents | In progress — code complete, integration tests being written |
-| 3. Dashboard, charts, monitor management, status page | Not started |
-| 4. Email, reliability, security, integration coverage | Partly done (email flow works end to end via Mailpit) |
-| 5. Fresh-setup verification, docs, shutdown | Not started |
+| 1. Foundation, database, configuration, authentication | **Complete, verified** |
+| 2. Scheduler, worker, check execution, incidents | **Complete, verified** |
+| 3. Dashboard, charts, monitor management, status page | **Complete, verified** |
+| 4. Email, reliability, security, integration coverage | **Complete, verified** (real SMTP delivery unverified — see Blockers) |
+| 5. Fresh-setup verification, final fixes, documentation | **Complete** |
 
-## Completed
+`docs/HANDOVER.md` §11 holds the full acceptance checklist with per-item
+evidence. This file is the short version plus the next action.
 
-* npm workspaces monorepo: `apps/api`, `apps/web` (scaffold pending), `packages/shared`.
-  One root `package-lock.json`; pinned exact versions.
-* `docker-compose.dev.yml` (**development only**) with Postgres 17, Redis 7 and Mailpit
-  on non-default loopback ports (55433 / 56379 / 58025 + 58125).
-* `.env.example` with every variable documented; local `.env` is gitignored.
-* Prisma schema + **three committed migrations**, including the constraints Prisma's
-  schema language cannot express (monitor slot range, one-open-incident-per-monitor
-  partial unique index, check field consistency, incident close-reason consistency).
-* Config loader with cross-field production safety rules (refuses insecure cookies,
-  unverified SMTP TLS, non-300s interval, example session secret in production).
-* Structured logging with secret redaction; request ids.
-* SSRF guard: scheme/credential/port/hostname policy, full IPv4 + IPv6
-  special-purpose range coverage, IPv4-mapped / NAT64 / 6to4 unwrapping, DNS
-  resolution with whole-hostname refusal on any non-public answer, and
-  connection pinning that forbids re-resolution (DNS rebinding).
-* HTTP check executor on undici: GET only, fixed header set, no redirects,
-  mandatory TLS verification, time budget, response byte cap, body never stored.
-* Result processor / incident state machine with row-locked transactions and
-  database-level idempotency.
-* Durable scheduler: atomic `FOR UPDATE SKIP LOCKED` claim in Postgres, slot
-  re-basing after a long outage, startup + periodic reconciliation.
-* Retention cleanup (checks, resolved incidents, dead sessions, spent tokens).
-* Auth: signup (non-enumerating), login, logout, verification, resend, password
-  reset, password change. Argon2id hashing, HMAC-hashed opaque tokens, opaque
-  server-side sessions, CSRF double-submit + origin allowlist, Redis-backed rate
-  limits.
-* Monitors: create/list/read/update/pause/resume/delete with ownership checks and
-  the DB-enforced 3-monitor limit.
-* Status page domain + owner settings API + unauthenticated public projection.
-* API and worker as separate entrypoints with graceful shutdown; health,
-  readiness and product-meta endpoints.
-* Email: templates (verification, reset, password changed, account exists, down,
-  recovery), pooled SMTP transport, queued delivery with persisted alert state
-  and an outbox reconciliation pass.
+## Latest verification run
 
-## Verified so far
+All executed on 2026-09-10 against the dev stack (Postgres 17, Redis 7, Mailpit)
+in `docker-compose.dev.yml`.
 
-* `npm run lint` — clean.
-* `npm run typecheck` (shared + api) — clean.
-* `npm run test:unit -w @pingexa/api` — **137 passing** (address policy, URL guard
-  including rebinding and pinning, HTTP check classification and bounds, uptime
-  and staleness maths, email templates and escaping).
-* `npm run test:integration -w @pingexa/api` — **28 passing** against real
-  Postgres + Redis (full auth surface, CSRF, origin allowlist, session hashing,
-  single-use tokens, reset revoking sessions).
-* Manual end-to-end smoke against the dev stack: signup -> Mailpit captures the
-  verification email -> verify -> login -> create monitor -> scheduler claims it
-  -> worker performs the check -> `state = UP`, `lastStatusCode = 200`,
-  `lastResponseTimeMs = 143`. SSRF attempts on `127.0.0.1:4000` and
-  `169.254.169.254` were both refused with a safe message.
+| Check | Result |
+|---|---|
+| `npm run lint` | clean |
+| `npm run typecheck` | clean (shared, api, web) |
+| `npm run test:unit` | **137 passed** (api) + **35 passed** (web) |
+| `npm run test:integration` | **105 passed** against real Postgres + Redis |
+| `npm run test:e2e` | **42 passed** — 21 desktop-chromium + 21 mobile-chromium |
+| `npm run build` | clean (shared, api, web) |
+| `./scripts/verify-fresh-setup.sh` | passed — disposable database, migrations only, no schema drift, all four hand-written constraints present, built API booted and signed a user up, integration suite green |
 
-## Outstanding
+## Bugs found by verification and fixed
 
-1. Integration tests for monitors, ownership, the 3-monitor limit under
-   concurrency, the incident lifecycle, queue redelivery, restart recovery,
-   retention, status-page privacy.
-2. React + Vite web app (all pages, charts, states, branding).
-3. Playwright end-to-end browser flows including Mailpit.
-4. Seed script for clearly-separated demo data.
-5. Fresh-setup verification on an isolated disposable database.
-6. `docs/HANDOVER.md`, `docs/API.md`, `CLAUDE.md`.
+These are worth keeping, because each was found by a test rather than by reading:
+
+1. **Alert delivery did not actually exclude concurrent senders.** The claim was
+   `UPDATE ... WHERE id = ? AND status = 'PENDING'` with an `attempts`
+   increment, which leaves the row `PENDING` for the duration of the send, so
+   two workers both matched and both sent. Now claimed by optimistic concurrency
+   on the exact `attempts` value read (`docs/DECISIONS.md` D19). Found by the
+   fresh-setup run; the previous test had been passing on timing luck. Test
+   strengthened to 10 concurrent handlers and re-verified over four runs.
+2. **The public status page was briefly cacheable.** `Cache-Control:
+   public, max-age=30` meant a browser that had already loaded a page kept
+   seeing it for up to 30 seconds after the owner unpublished it or rotated the
+   slug — a violation of "disabling publication must remove public access". Now
+   `no-store` (`docs/DECISIONS.md` D18). Found by the slug-rotation e2e test.
+3. **Token-redemption endpoints shared the login rate-limit bucket.**
+   `verify-email` and `password-reset/confirm` carry no email, so the `ip|email`
+   key collapsed to `ip|`, lumping redemptions for *different* accounts into one
+   small allowance. Split into its own looser per-IP bucket
+   (`TOKEN_RATE_LIMIT_MAX`), since a token is 256 bits of randomness and the
+   limit there is about volume, not guessing. Found by a real 429 during e2e.
+4. **A failed check on a monitor that was not yet DOWN said nothing.** The
+   failure threshold is three, so a card could look healthy while the site was
+   already erroring. Both the card and the detail page now show the reason and
+   the streak. Found by an e2e assertion.
+5. **BullMQ 6 rejects `:` in a custom job id**, so every scheduled check silently
+   failed to enqueue. Job ids now encode the slot as epoch milliseconds. Found
+   by the first manual end-to-end run.
 
 ## Blockers
 
-None. Real SMTP delivery is the only externally-dependent item and is not yet
-reached; local Mailpit delivery works.
+**Real SMTP delivery is unverified** — the only outstanding item, and it needs
+something I cannot supply myself. Every email path works against Mailpit and
+every template is unit-tested, but no message has gone through a real provider
+to a real mailbox.
+
+To close it: set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`,
+`SMTP_PASSWORD` and `SMTP_REJECT_UNAUTHORIZED=true` in your local `.env`, and
+name a recipient address you are happy to receive test mail at. Do not paste
+credentials into a chat message — put them in `.env`, which is gitignored.
+
+Nothing else is blocked.
 
 ## Exact next action
 
-Write `apps/api/tests/integration/monitors.test.ts` and
-`apps/api/tests/integration/monitoring.test.ts` (incident lifecycle, idempotency,
-concurrency, restart recovery).
+Nothing in the agreed application scope remains. The next action belongs to the
+repository owner, in this order:
+
+1. Optionally supply SMTP credentials and an authorised test recipient so real
+   delivery can be verified (above).
+2. Build the production deployment — Dockerfiles, production Compose, server,
+   domain, HTTPS, CI/CD. Deliberately **not** in this repository; work through
+   `docs/HANDOVER.md` §10 as the requirements list. The two things most likely
+   to bite are `TRUST_PROXY_HOPS` and the SPA fallback route.
+
+If a future session is asked to continue: read `CLAUDE.md`, then this file, then
+`git status`, and re-run the verification table above before trusting any of it.

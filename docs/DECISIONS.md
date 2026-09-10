@@ -137,3 +137,33 @@ idempotency key the SMTP provider honours or a two-phase outbox with provider me
 ids, which V1 does not implement. Ordinary duplicates (queue redelivery, several
 workers, repeated failures inside one incident) are all prevented by the
 `(incidentId, kind)` constraint plus a conditional status transition.
+
+## D18 — The public status page is `no-store`, not briefly cacheable
+The obvious optimisation for an unauthenticated page whose data changes every
+five minutes is a short public cache. It is wrong here: the slug is the only
+access control, so unpublishing the page or rotating the slug must take effect
+immediately. A `max-age=30` response meant a browser that had already loaded the
+page kept seeing it for up to 30 seconds after the owner revoked it — found by
+the end-to-end test for slug rotation, which is what prompted this entry.
+Freshness of revocation beats saving one query.
+Tradeoff: every public page view costs a handful of database queries. The
+endpoint has its own IP rate limit (`PUBLIC_RATE_LIMIT_MAX`) to bound that.
+
+## D19 — Alert delivery is claimed by optimistic concurrency on `attempts`
+The first version of `deliverAlert` "claimed" the notification row with
+`UPDATE ... WHERE id = ? AND status = 'PENDING'` and an `attempts` increment.
+That excludes nobody: the row stays `PENDING` until the send completes, so two
+workers both match the predicate and both send the same alert. The
+fresh-setup verification run caught it — the integration test for concurrent
+senders had been passing on timing luck.
+
+The claim now matches on the exact `attempts` value that was read
+(`WHERE id = ? AND status = 'PENDING' AND attempts = N` → `SET attempts = N+1`).
+Postgres serialises the two updates, so exactly one caller sees a row count of 1
+and the rest back out.
+
+Considered and rejected: adding a `SENDING` status. It needs a migration and it
+introduces a stuck state — a worker that dies mid-send leaves a row nothing will
+ever pick up without a reaper. With the `attempts` approach the same crash
+leaves the row `PENDING` with the attempt already counted, which the existing
+outbox pass retries and the attempt budget still bounds.

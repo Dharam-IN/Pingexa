@@ -72,6 +72,26 @@ export const authLimiter: RequestHandler = isTest
       message: 'Too many attempts. Wait a few minutes and try again.',
     });
 
+/**
+ * Endpoints that consume an emailed token: email verification and password-reset
+ * confirmation.
+ *
+ * These need their own bucket for two reasons. They carry no email address, so
+ * `authLimiter`'s `ip|email` key would collapse to `ip|` and lump every
+ * token redemption from one address — including redemptions for *different*
+ * accounts — into a single small allowance. And they are not a guessing surface:
+ * a token is 32 bytes of CSPRNG output, so the limit here is about request
+ * volume, not about brute force.
+ */
+export const tokenLimiter: RequestHandler = isTest
+  ? passthrough
+  : build({
+      name: 'token',
+      windowMs: env.AUTH_RATE_LIMIT_WINDOW_MS,
+      max: env.TOKEN_RATE_LIMIT_MAX,
+      message: 'Too many attempts. Wait a few minutes and try again.',
+    });
+
 /** Everything behind a session. Keyed by user id so one noisy tab is contained. */
 export const apiLimiter: RequestHandler = isTest
   ? passthrough

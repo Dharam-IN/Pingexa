@@ -116,6 +116,10 @@ const envSchema = z.object({
 
   AUTH_RATE_LIMIT_WINDOW_MS: intFromEnv(1000, 86400000).default(900000),
   AUTH_RATE_LIMIT_MAX: intFromEnv(1, 100000).default(15),
+  // Separate, looser cap for endpoints that consume an emailed token. Those are
+  // not credential-guessing surfaces (a token is 256 bits of CSPRNG output) and
+  // they carry no email address, so they must not share a bucket with login.
+  TOKEN_RATE_LIMIT_MAX: intFromEnv(1, 100000).default(60),
   API_RATE_LIMIT_WINDOW_MS: intFromEnv(1000, 86400000).default(60000),
   API_RATE_LIMIT_MAX: intFromEnv(1, 1000000).default(300),
   PUBLIC_RATE_LIMIT_WINDOW_MS: intFromEnv(1000, 86400000).default(60000),
