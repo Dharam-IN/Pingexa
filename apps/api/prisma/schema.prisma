@@ -1,0 +1,261 @@
+// Pingexa data model.
+//
+// Design notes that matter for correctness:
+//  * Check has a unique (monitorId, scheduledFor): the queue is at-least-once, so
+//    result processing is made idempotent by the database, not by the queue.
+//  * Notification has a unique (incidentId, kind): exactly one DOWN email and one
+//    RECOVERY email can ever exist per incident.
+//  * A partial unique index (added in migration SQL) allows at most one open
+//    incident per monitor.
+//  * Monitor.slot is unique per user and CHECK-constrained to 0..2, which makes a
+//    fourth monitor physically impossible regardless of request concurrency.
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  runtime             = "nodejs"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum MonitorState {
+  PENDING
+  UP
+  DOWN
+}
+
+enum CheckOutcome {
+  UP
+  DOWN
+}
+
+enum FailureKind {
+  HTTP_ERROR
+  REDIRECT
+  TIMEOUT
+  DNS_ERROR
+  CONNECTION_ERROR
+  TLS_ERROR
+  BLOCKED_ADDRESS
+  INVALID_URL
+  RESPONSE_TOO_LARGE
+  UNKNOWN_ERROR
+}
+
+enum AuthTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
+}
+
+enum NotificationKind {
+  DOWN
+  RECOVERY
+}
+
+/// Why an incident stopped being open. Only RECOVERED sends a recovery email.
+enum IncidentCloseReason {
+  /// A scheduled check succeeded again.
+  RECOVERED
+  /// The owner changed the monitored URL, so the old outage is no longer about
+  /// the same target and we stop counting it.
+  MONITOR_RECONFIGURED
+  /// The owner paused the monitor, so we stopped knowing its state.
+  MONITOR_PAUSED
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model User {
+  id              String    @id @default(uuid()) @db.Uuid
+  email           String    @unique
+  passwordHash    String
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  monitors      Monitor[]
+  sessions      Session[]
+  authTokens    AuthToken[]
+  notifications Notification[]
+  statusPage    StatusPage?
+
+  @@map("users")
+}
+
+/// Opaque server-side session. Only the SHA-256 of the cookie value is stored.
+model Session {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @db.Uuid
+  tokenHash    String    @unique
+  createdAt    DateTime  @default(now())
+  lastSeenAt   DateTime  @default(now())
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  /// Truncated + hashed user agent, kept only so a user can recognise a session.
+  userAgentTag String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+/// Single-use, expiring email verification and password reset tokens (hashed).
+model AuthToken {
+  id         String        @id @default(uuid()) @db.Uuid
+  userId     String        @db.Uuid
+  type       AuthTokenType
+  tokenHash  String        @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime      @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@index([expiresAt])
+  @@map("auth_tokens")
+}
+
+model Monitor {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @db.Uuid
+  /// 0-based slot, unique per user, CHECK-constrained to 0..2. This is the
+  /// database-level enforcement of MAX_MONITORS_PER_USER.
+  slot   Int
+
+  name String
+  url  String
+
+  state    MonitorState @default(PENDING)
+  paused   Boolean      @default(false)
+  isPublic Boolean      @default(false)
+
+  intervalSeconds Int @default(300)
+
+  /// Consecutive failed *distinct scheduled checks*. Queue retries never move it.
+  consecutiveFailures Int       @default(0)
+  /// checkedAt of the first failure in the current failing streak.
+  failingSince        DateTime?
+
+  lastCheckedAt      DateTime?
+  lastResponseTimeMs Int?
+  lastStatusCode     Int?
+  lastFailureKind    FailureKind?
+  lastFailureReason  String?
+
+  /// Scheduling source of truth. The worker claims monitors whose nextCheckAt is due.
+  nextCheckAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checks    Check[]
+  incidents Incident[]
+
+  @@unique([userId, slot])
+  @@index([nextCheckAt])
+  @@index([userId])
+  @@map("monitors")
+}
+
+model Check {
+  id        String @id @default(uuid()) @db.Uuid
+  monitorId String @db.Uuid
+
+  /// The scheduled slot this check belongs to. Unique per monitor, which makes
+  /// result processing idempotent under queue redelivery.
+  scheduledFor DateTime
+  startedAt    DateTime
+  checkedAt    DateTime
+
+  outcome        CheckOutcome
+  statusCode     Int?
+  responseTimeMs Int?
+  failureKind    FailureKind?
+  /// Short, sanitised reason. Never contains response bodies or secrets.
+  failureReason  String?
+
+  createdAt DateTime @default(now())
+
+  monitor Monitor @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+
+  @@unique([monitorId, scheduledFor])
+  @@index([monitorId, checkedAt])
+  @@index([checkedAt])
+  @@map("checks")
+}
+
+model Incident {
+  id        String @id @default(uuid()) @db.Uuid
+  monitorId String @db.Uuid
+
+  /// checkedAt of the first failed check in the streak that produced this outage.
+  startedAt   DateTime
+  /// checkedAt of the failure that crossed the 3-failure threshold.
+  detectedAt  DateTime
+  /// checkedAt of the first successful check after the outage. Null while open.
+  resolvedAt  DateTime?
+  /// Set together with resolvedAt. Distinguishes a real recovery from an
+  /// incident we closed because the monitor was reconfigured or paused.
+  closeReason IncidentCloseReason?
+  causeKind   FailureKind?
+  causeReason String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  monitor       Monitor        @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  notifications Notification[]
+
+  @@index([monitorId, startedAt])
+  @@index([startedAt])
+  @@map("incidents")
+}
+
+/// Persisted alert delivery state. One DOWN and one RECOVERY per incident, max.
+model Notification {
+  id         String @id @default(uuid()) @db.Uuid
+  incidentId String @db.Uuid
+  userId     String @db.Uuid
+
+  kind      NotificationKind
+  status    NotificationStatus @default(PENDING)
+  attempts  Int                @default(0)
+  lastError String?
+  sentAt    DateTime?
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, kind])
+  @@index([status])
+  @@map("notifications")
+}
+
+model StatusPage {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @db.Uuid
+
+  /// 32 hex characters of CSPRNG output. Unguessable by design.
+  slug      String   @unique
+  title     String
+  published Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("status_pages")
+}

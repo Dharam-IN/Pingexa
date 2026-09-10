@@ -1,0 +1,76 @@
+# ---------------------------------------------------------------------------
+# DEVELOPMENT AND LOCAL INTEGRATION TESTING ONLY.
+#
+# This file is NOT a production deployment artifact. It binds every port to
+# 127.0.0.1, uses throwaway credentials, and runs a fake SMTP server (Mailpit)
+# that captures mail instead of delivering it. Do not reuse it on a server.
+#
+# It provides only the backing services. The API, the worker and the web app run
+# on the host with `npm run dev:api` / `dev:worker` / `dev:web`.
+#
+# Ports are deliberately non-default so this stack cannot collide with other
+# Postgres/Redis instances already running on the machine.
+# ---------------------------------------------------------------------------
+name: pingexa-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: pingexa-dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pingexa
+      POSTGRES_PASSWORD: pingexa_dev_password
+      POSTGRES_DB: pingexa_dev
+      # Needed so integration/fresh-setup runs can CREATE DATABASE.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8'
+    ports:
+      - '127.0.0.1:55433:5432'
+    volumes:
+      - pingexa_dev_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U pingexa -d pingexa_dev']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: pingexa-dev-redis
+    restart: unless-stopped
+    # BullMQ requires noeviction: silently evicting job keys corrupts queues.
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    ports:
+      - '127.0.0.1:56379:6379'
+    volumes:
+      - pingexa_dev_redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.28
+    container_name: pingexa-dev-mailpit
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+      MP_MAX_MESSAGES: 500
+    ports:
+      # SMTP endpoint used by the worker
+      - '127.0.0.1:58025:1025'
+      # Web UI + REST API used by the e2e tests: http://127.0.0.1:58125
+      - '127.0.0.1:58125:8025'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  pingexa_dev_pgdata:
+    name: pingexa_dev_pgdata
+  pingexa_dev_redisdata:
+    name: pingexa_dev_redisdata
