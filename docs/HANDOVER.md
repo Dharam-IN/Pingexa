@@ -109,7 +109,7 @@ that is what `TRUSTED_ORIGINS` and the CORS layer are for.
 | `npm run typecheck` | `tsc --noEmit` for all three packages. |
 | `npm run test:unit` | Pure logic. No Postgres, Redis or network. |
 | `npm run test:integration` | Real Postgres + Redis. Creates and migrates a disposable `pingexa_test` database. |
-| `npm run test:e2e` | Playwright against the whole running stack, including Mailpit. |
+| `npm run test:e2e` | Playwright against the whole running stack, including Mailpit. 66 tests across a desktop and a phone viewport. |
 | `./scripts/verify-fresh-setup.sh` | Fresh-setup verification on a disposable database (see below). |
 | `npm run dev:up` / `dev:down` / `dev:logs` | The dev Compose stack (`down` stops containers and keeps volumes). |
 
@@ -137,6 +137,19 @@ end-to-end suite does make real requests to `example.com`.
 
 `npx playwright install chromium` is needed once if Playwright's browser is not
 already present.
+
+For anything CSS-dependent — the theme suite especially — run against the
+production build rather than the dev server, which was repeatedly observed
+serving stale Tailwind output during development:
+
+```bash
+npm run build -w @pingexa/web
+VITE_PREVIEW_PORT=5173 npm run preview -w @pingexa/web   # the origin the API trusts
+npm run test:e2e
+```
+
+The preview port must be 5173: `TRUSTED_ORIGINS` lists that origin, and the API
+correctly refuses cookie-bearing writes from anywhere else.
 
 A full `npm run test:e2e` run creates roughly twenty accounts per browser
 project from a single address, which legitimately exceeds the production-sensible
@@ -396,6 +409,28 @@ A monitor whose newest check is older than **three intervals** is reported with
 shown separately. That is how a worker outage surfaces instead of silently
 freezing a green tick.
 
+### Theming
+
+Attribute-driven, with three user-facing options and two states the CSS ever sees:
+
+* `<html data-theme="light|dark" data-theme-preference="light|dark|system">`.
+  `system` is resolved to one of the two before it reaches CSS, so a media query
+  and the selector can never disagree about which theme is active.
+* The resolved theme is applied by a small inline script in
+  `apps/web/index.html` that runs synchronously in `<head>`, before the
+  stylesheet applies and long before React mounts. That, plus an inline `<style>`
+  covering the moment before the app's CSS loads, is what makes a reload
+  flash-free.
+* The preference is stored in `localStorage` under `pingexa.theme`. Nothing is
+  stored until the user actually chooses, so "System" is a genuine default
+  rather than a recorded decision. Blocked or unavailable storage degrades to
+  applying the theme for the page view without remembering it.
+* While `system` is selected the app follows the OS live, via
+  `useSyncExternalStore` over `prefers-color-scheme`. Nothing caches a resolved
+  theme, so no value can go stale.
+* Every colour comes from a semantic token; `docs/DECISIONS.md` D21 and the
+  theming section of `CLAUDE.md` state the convention new components must follow.
+
 ### Limits
 
 Three monitors per user, enforced by a unique `(userId, slot)` index plus a
@@ -610,6 +645,14 @@ Legend: **PASS** verified by an executed test or an observed run ·
 | No fake metrics, testimonials or dead controls | PASS | e2e asserts no social-proof copy; every control is wired |
 | Seed/demo data clearly separate | PASS | `[DEMO]` prefix, dedicated account, refuses production |
 | Responsive | PASS | e2e runs a mobile project (Pixel 7) and asserts no horizontal overflow; every page was also screenshotted at 1280px and at phone width, in light and dark, and reviewed |
+| Light and dark themes across the whole app | PASS | see the Theming section below |
+| Theme selector (Light / Dark / System) on public and authenticated pages, mobile included | PASS | `e2e/theme.spec.ts` enumerates 7 public routes, the 404, the dashboard, settings and the public status page; the browser probe additionally ran all of them at 1280px and Pixel 7 in both themes |
+| Preference persists across navigation, reload, logout and a later visit | PASS | `e2e/theme.spec.ts`, plus a `localStorage` assertion |
+| Defaults to System; follows the OS while System is selected | PASS | e2e in both directions, and 12 unit tests on the resolution logic |
+| No flash of the wrong theme on first load | PASS | e2e records `data-theme` at the earliest observable moment and asserts it is already correct, for a stored preference and for a dark OS |
+| Charts, axes and tooltips adapt | PASS | e2e asserts the grid stroke differs between themes; the probe recorded `oklch(0.91 …)` light vs `oklch(0.33 …)` dark |
+| Readable contrast in both themes | PASS | the probe computes WCAG contrast from painted colours for every text node on 11 screens × 2 themes × 2 viewports, plus validation, error, toast, dialog and edit-form states: **0 failures** |
+| Visible focus states in both themes | PASS | e2e asserts a ≥1px non-`none` outline reached by keyboard; pixel sampling confirmed the ring is drawn in the theme's `--focus-ring` colour (dark sample `rgb(165,158,255)`, an exact match for its token) |
 | Accessible forms | PASS | every input is label+hint+error wired via ids; switches use `role="switch"` |
 
 ### Build and fresh setup
@@ -619,6 +662,7 @@ Legend: **PASS** verified by an executed test or an observed run ·
 | Lint clean | PASS | `npm run lint` |
 | Typecheck clean | PASS | `npm run typecheck` |
 | Build clean | PASS | `npm run build` |
+| Test totals | PASS | 139 API unit, 49 web unit, 108 integration, 66 end-to-end |
 | Fresh setup from committed migrations on an isolated database | PASS | `./scripts/verify-fresh-setup.sh` — creates a timestamped database, applies only the committed migrations, boots the **built** API on it, signs a user up, then runs the integration suite. Drops only its own database. |
 | Committed migrations match the schema | PASS | `prisma migrate diff` in the fresh-setup script reports "No difference detected" between `schema.prisma` and the migrated database |
 | Hand-written constraints present in a fresh database | PASS | fresh-setup script asserts all four exist and fails if any is missing |
@@ -627,13 +671,50 @@ Legend: **PASS** verified by an executed test or an observed run ·
 
 ## 12. What is not verified
 
-**Real SMTP delivery.** Every email path is exercised locally against Mailpit
-and every template is unit-tested, but no message has been delivered through a
-real SMTP provider to a real mailbox. To close this, set `SMTP_HOST`,
-`SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` and
-`SMTP_REJECT_UNAUTHORIZED=true` in your local `.env`, and name a recipient
-address you are happy to receive test mail at. Until then: **local application
-complete; real SMTP delivery unverified.**
+**Real SMTP delivery — deferred by the repository owner.** Every email path is
+exercised locally against Mailpit and every template is unit-tested, but no
+message has been delivered through a real SMTP provider to a real mailbox. This
+was explicitly postponed rather than attempted, and no credentials were
+requested. Status: **local application complete; real SMTP delivery unverified.**
+
+The work is fully prepared, so closing it is configuration plus one run:
+
+| Variable | Required? | Local value | Set to |
+|---|---|---|---|
+| `SMTP_HOST` | required, no default | `127.0.0.1` | the provider's host |
+| `SMTP_PORT` | default `1025` | `58025` | `587` (STARTTLS) or `465` (implicit TLS) |
+| `SMTP_SECURE` | default `false` | `false` | `true` only for port 465 |
+| `SMTP_USER` | default `''` | empty | the username / API-key user |
+| `SMTP_PASSWORD` | default `''` | empty | the secret |
+| `SMTP_REJECT_UNAUTHORIZED` | default `true` | **`false`** (Mailpit's self-signed cert) | **`true`** |
+| `MAIL_FROM_NAME` | default `Pingexa` | `Pingexa` | fine as-is |
+| `MAIL_FROM_ADDRESS` | required, no default | **`alerts@pingexa.local`** | a sender the provider accepts |
+| `MAIL_MAX_ATTEMPTS` | default `5` | `5` | fine as-is |
+| `PUBLIC_APP_URL` | required | `http://localhost:5173` | wherever the emailed links should point |
+
+Three things that will otherwise waste an afternoon:
+
+1. **`SMTP_USER` gates authentication entirely.** The transport builds its auth
+   block as `...(env.SMTP_USER ? { auth: { user, pass } } : {})`, so setting only
+   `SMTP_PASSWORD` configures *no* auth and the provider will refuse the session.
+2. `SMTP_REJECT_UNAUTHORIZED` is `false` locally for Mailpit. Leave it false
+   against a real provider and any certificate is accepted. (`NODE_ENV=production`
+   refuses to start with it false.)
+3. `MAIL_FROM_ADDRESS` is a `.local` address locally, which every real provider
+   will reject. Use a domain you control, with SPF and DKIM.
+
+Only the **worker** sends mail; the API just enqueues. Both read the repository
+root `.env`, so it is configured once. Put the values in `.env` with an editor —
+it is gitignored, and `cat`-ing it or echoing the variables would expose them.
+
+The verification choreography was rehearsed end to end against Mailpit and
+produces five messages: email confirmation, one DOWN alert, one recovery alert,
+a password reset, and a password-changed notice. Because alerts only ever go to
+the *verified account email*, the authorised recipient also has to be the signup
+address for that run.
+
+`PUBLIC_APP_URL` stays at `http://localhost:5173` unless changed, so emailed
+links resolve only on the machine running the stack.
 
 **Everything about production.** No production Dockerfile, Compose file, cloud
 infrastructure, CI/CD pipeline, domain, TLS termination or deployment has been

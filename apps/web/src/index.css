@@ -40,35 +40,65 @@
   --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 }
 
+/*
+ * Theming is attribute-driven, not media-query-driven.
+ *
+ * `<html>` always carries a *resolved* `data-theme="light"|"dark"`, written by
+ * the bootstrap script in index.html before first paint and kept in sync by
+ * ThemeContext. The user's *preference* ("light" | "dark" | "system") lives
+ * separately in `data-theme-preference`, and "system" is resolved to one of the
+ * two before it ever reaches CSS.
+ *
+ * That one decision is what makes the rest simple: every token and every `dark:`
+ * utility keys off a single selector, so there is no way for a media query and a
+ * toggle to disagree about which theme is active.
+ */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
 @layer base {
+  /* Light is the base. Every semantic token must be defined here. */
   :root {
     color-scheme: light;
+
     --surface: oklch(0.99 0.002 285);
     --surface-raised: oklch(1 0 0);
     --surface-sunken: oklch(0.97 0.004 285);
     --border-subtle: oklch(0.91 0.006 285);
     --text-strong: oklch(0.24 0.02 285);
-    --text-muted: oklch(0.52 0.015 285);
+    --text-muted: oklch(0.46 0.015 285);
+
+    /* Foreground for anything sitting on a brand-coloured fill. */
+    --on-brand: oklch(1 0 0);
+    /* The knob of a switch, on both brand and neutral tracks. */
+    --switch-knob: oklch(1 0 0);
+    /* Focus indicator. Must stay visible against every surface. */
+    --focus-ring: oklch(0.54 0.21 285);
   }
 
   /*
-   * The dark palette follows the OS setting. There is no in-app theme switch:
-   * one fewer piece of state, and the OS preference is what people actually set.
+   * Dark redefines only what changes. Adding a token above without adding it
+   * here is the one mistake that breaks a theme, so keep the two lists aligned.
    */
-  @media (prefers-color-scheme: dark) {
-    :root {
-      color-scheme: dark;
-      --surface: oklch(0.19 0.012 285);
-      --surface-raised: oklch(0.23 0.014 285);
-      --surface-sunken: oklch(0.16 0.01 285);
-      --border-subtle: oklch(0.31 0.014 285);
-      --text-strong: oklch(0.96 0.004 285);
-      --text-muted: oklch(0.72 0.012 285);
-    }
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+
+    --surface: oklch(0.19 0.012 285);
+    --surface-raised: oklch(0.23 0.014 285);
+    --surface-sunken: oklch(0.16 0.01 285);
+    --border-subtle: oklch(0.33 0.014 285);
+    --text-strong: oklch(0.96 0.004 285);
+    --text-muted: oklch(0.76 0.012 285);
+
+    --on-brand: oklch(1 0 0);
+    --switch-knob: oklch(1 0 0);
+    /* Brighter than the light-mode ring so it reads on a dark surface. */
+    --focus-ring: oklch(0.75 0.15 285);
   }
 
   html {
     -webkit-text-size-adjust: 100%;
+    /* Painted before the app mounts, so a reload never flashes white. */
+    background: var(--surface);
   }
 
   body {
@@ -83,7 +113,7 @@
 
   /* A single visible focus treatment everywhere, including custom controls. */
   :focus-visible {
-    outline: 2px solid var(--color-brand-500);
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
     border-radius: 4px;
   }
@@ -110,6 +140,14 @@
 
 @utility text-strong {
   color: var(--text-strong);
+}
+
+@utility text-on-brand {
+  color: var(--on-brand);
+}
+
+@utility bg-switch-knob {
+  background: var(--switch-knob);
 }
 
 /* The "ping" motif: one slow ring, used sparingly on live UP states only. */

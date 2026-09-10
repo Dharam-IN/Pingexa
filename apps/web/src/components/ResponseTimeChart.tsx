@@ -89,18 +89,16 @@ export function ResponseTimeChart({
               tickMargin={8}
               minTickGap={40}
             />
+            {/*
+              The unit goes on each tick rather than in an axis label. The label
+              was positioned inside the plot area and collided with the topmost
+              tick, rendering as a clipped "ns" — visible in both themes.
+            */}
             <YAxis
               stroke="var(--text-muted)"
               fontSize={11}
-              tickFormatter={(value: number) => `${value}`}
-              width={48}
-              label={{
-                value: 'ms',
-                position: 'insideTopLeft',
-                fill: 'var(--text-muted)',
-                fontSize: 11,
-                offset: 8,
-              }}
+              tickFormatter={(value: number) => `${value} ms`}
+              width={62}
             />
             <Tooltip
               contentStyle={{

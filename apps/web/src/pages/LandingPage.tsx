@@ -1,5 +1,6 @@
 import { Link } from 'react-router';
 import { useAuth } from '../state/AuthContext';
+import { ThemeSelector } from '../components/ThemeSelector';
 import { Card, Logo, Wordmark } from '../components/ui';
 
 /**
@@ -17,10 +18,11 @@ export function LandingPage() {
       <header className="mx-auto flex max-w-5xl items-center justify-between px-4 py-5 sm:px-6">
         <Wordmark />
         <nav className="flex items-center gap-2 text-sm" aria-label="Account">
+          <ThemeSelector compact className="mr-1" />
           {status === 'authenticated' ? (
             <Link
               to="/app"
-              className="rounded-lg bg-brand-600 px-4 py-2 font-medium text-white hover:bg-brand-700"
+              className="rounded-lg bg-brand-600 px-4 py-2 font-medium text-on-brand hover:bg-brand-700"
             >
               Open dashboard
             </Link>
@@ -31,7 +33,7 @@ export function LandingPage() {
               </Link>
               <Link
                 to="/signup"
-                className="rounded-lg bg-brand-600 px-4 py-2 font-medium text-white hover:bg-brand-700"
+                className="rounded-lg bg-brand-600 px-4 py-2 font-medium text-on-brand hover:bg-brand-700"
               >
                 Create account
               </Link>
@@ -59,7 +61,7 @@ export function LandingPage() {
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
             <Link
               to="/signup"
-              className="rounded-lg bg-brand-600 px-5 py-3 text-sm font-medium text-white hover:bg-brand-700"
+              className="rounded-lg bg-brand-600 px-5 py-3 text-sm font-medium text-on-brand hover:bg-brand-700"
             >
               Create a free account
             </Link>
@@ -102,7 +104,7 @@ export function LandingPage() {
               },
             ].map((item) => (
               <Card as="li" key={item.step} className="p-5">
-                <span className="inline-flex size-7 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-white">
+                <span className="inline-flex size-7 items-center justify-center rounded-full bg-brand-600 text-sm font-semibold text-on-brand">
                   {item.step}
                 </span>
                 <h3 className="mt-3 text-sm font-semibold text-strong">{item.title}</h3>

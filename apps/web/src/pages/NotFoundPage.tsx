@@ -1,13 +1,15 @@
 import { Link } from 'react-router';
+import { ThemeSelector } from '../components/ThemeSelector';
 import { Card, Logo, Wordmark } from '../components/ui';
 
 export function NotFoundPage() {
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="mx-auto w-full max-w-5xl px-4 py-5 sm:px-6">
+      <header className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 py-5 sm:px-6">
         <Link to="/" aria-label="Pingexa home">
           <Wordmark />
         </Link>
+        <ThemeSelector compact />
       </header>
       <main className="flex flex-1 items-center justify-center px-4">
         <Card className="max-w-md p-8 text-center">
@@ -18,7 +20,7 @@ export function NotFoundPage() {
           </p>
           <Link
             to="/"
-            className="mt-5 inline-block rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-700"
+            className="mt-5 inline-block rounded-lg bg-brand-600 px-4 py-2.5 text-sm font-medium text-on-brand hover:bg-brand-700"
           >
             Back to the start
           </Link>

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router';
 import type { PublicStatusPageResponse } from '@pingexa/shared';
 import { StateBadge } from '../components/StateBadge';
+import { ThemeSelector } from '../components/ThemeSelector';
 import { Alert, Card, LoadingBlock, Logo, Wordmark } from '../components/ui';
 import { ApiError, api } from '../lib/api';
 import { formatDateTime, formatDuration, formatRelative, formatUptime } from '../lib/format';
@@ -198,9 +199,12 @@ function PublicFrame({ title, children }: { title?: string; children: React.Reac
           <h1 className="truncate text-lg font-semibold tracking-tight text-strong">
             {title ?? 'Status'}
           </h1>
-          <a href="/" className="shrink-0" aria-label="Pingexa">
-            <Wordmark size="sm" />
-          </a>
+          <div className="flex shrink-0 items-center gap-3">
+            <ThemeSelector compact />
+            <a href="/" aria-label="Pingexa">
+              <Wordmark size="sm" />
+            </a>
+          </div>
         </div>
       </header>
       <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:px-6 sm:py-8">{children}</main>

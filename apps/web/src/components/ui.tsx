@@ -21,6 +21,11 @@ export function Logo({ size = 28, live = false }: { size?: number; live?: boolea
       style={{ width: size, height: size }}
       aria-hidden="true"
     >
+      {/*
+        The mark itself is fixed white-on-brand in both themes: it is branding,
+        not chrome, and an inverted logo would read as a different product.
+        These are the only literal colours in the app for that reason.
+      */}
       <svg viewBox="0 0 32 32" width={size} height={size}>
         <rect width="32" height="32" rx="8" className="fill-brand-600" />
         <circle cx="16" cy="16" r="4" fill="#fff" />
@@ -50,12 +55,12 @@ type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
 
 const BUTTON_VARIANTS: Record<ButtonVariant, string> = {
   primary:
-    'bg-brand-600 text-white hover:bg-brand-700 active:bg-brand-800 disabled:bg-brand-300 dark:disabled:bg-brand-800',
+    'bg-brand-600 text-on-brand hover:bg-brand-700 active:bg-brand-800 disabled:bg-brand-300 dark:disabled:bg-brand-800',
   secondary:
     'surface text-strong hover:bg-[var(--surface-sunken)] disabled:opacity-50',
   ghost: 'text-muted hover:text-strong hover:bg-[var(--surface-sunken)] disabled:opacity-50',
   danger:
-    'bg-down-600 text-white hover:bg-down-700 disabled:bg-down-500/50',
+    'bg-down-600 text-on-brand hover:bg-down-700 disabled:bg-down-500/50',
 };
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -106,7 +111,7 @@ export function LinkButton({
     <a
       className={clsx(
         'inline-flex items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-2.5',
-        'text-sm font-medium text-white transition-colors hover:bg-brand-700',
+        'text-sm font-medium text-on-brand transition-colors hover:bg-brand-700',
         className,
       )}
       {...rest}
@@ -320,7 +325,7 @@ export function Toggle({
       >
         <span
           className={clsx(
-            'absolute top-0.5 size-5 rounded-full bg-white shadow transition-transform',
+            'absolute top-0.5 size-5 rounded-full bg-switch-knob shadow transition-transform',
             checked ? 'translate-x-5.5' : 'translate-x-0.5',
           )}
         />

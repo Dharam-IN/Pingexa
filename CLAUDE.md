@@ -34,7 +34,7 @@ apps/api/           Express API and the worker. Two entrypoints, one codebase.
   tests/integration/ Real Postgres + Redis against a disposable `pingexa_test` DB.
 apps/web/           React + Vite SPA.
   src/lib/          API client, formatters, the polling hook.
-  src/state/        Auth and toast contexts.
+  src/state/        Auth, theme and toast contexts.
   src/components/   UI kit, chart, cards, app shell.
   src/pages/        One file per route.
   e2e/              Playwright, against the whole running stack including Mailpit.
@@ -95,6 +95,45 @@ The logger redacts by key name; do not defeat it by renaming a field.
 RECOVERY row per incident. That unique index bounds alert *intents*, not SMTP
 messages: delivery is at-least-once, bounded at `MAIL_MAX_ATTEMPTS` transactions
 per alert. Never describe it as exactly-once — see `docs/DECISIONS.md` D17.
+
+**Every component must work in both themes.** The rules, in full:
+
+* Theming is **attribute-driven**. `<html>` carries a resolved
+  `data-theme="light"|"dark"` plus the raw `data-theme-preference` of
+  `light|dark|system`. CSS never sees "system" — it is resolved before it gets
+  there, by the bootstrap script in `apps/web/index.html` and then by
+  `ThemeContext`. Do not add a `prefers-color-scheme` media query: it would be a
+  second source of truth that can disagree with the selector.
+* **Colours come from semantic tokens, never from literals.** Surfaces and text
+  use `var(--surface)`, `--surface-raised`, `--surface-sunken`,
+  `--border-subtle`, `--text-strong`, `--text-muted`, `--on-brand`,
+  `--switch-knob`, `--focus-ring`, or the `surface` / `text-strong` /
+  `text-muted` / `text-on-brand` utilities built on them. Brand and status
+  ramps (`brand-*`, `up-*`, `down-*`, `warn-*`) are theme-independent scales:
+  pick a different *step* per theme with the `dark:` variant rather than a
+  different colour. The only literal colours in the app are the three `#fff`
+  values inside the `Logo` mark, which is branding and must not invert.
+* **A token added to `:root` must also be added to `:root[data-theme='dark']`.**
+  Forgetting the second one is the single mistake that breaks a theme, and it
+  fails silently in whichever theme you are not looking at.
+* **Charts read tokens too.** Recharts strokes and fills take
+  `var(--…)` so they re-resolve when the attribute flips; the e2e suite asserts
+  the grid stroke actually differs between themes.
+* **New pages must render the selector.** `AppShell`, `AuthLayout`,
+  `LandingPage`, `PublicStatusPage` and `NotFoundPage` each include
+  `<ThemeSelector />`; a new top-level shell needs one too, and the e2e suite
+  enumerates the routes that must have it.
+* **Focus indicators are not optional.** The app-wide
+  `:focus-visible { outline: 2px solid var(--focus-ring) }` rule is the single
+  mechanism. If a control hides its real input, keep the input full-size with
+  `appearance-none` and transparent colours rather than `opacity: 0` or a 1px
+  `sr-only` box — an invisible element's outline is invisible too, and mirroring
+  the ring onto a wrapper with `:has(:focus-visible)` was found not to paint.
+* **Verify against the production build, not the dev server.** Tailwind's dev
+  output was repeatedly observed lagging edits during this work, which made a
+  correct rule look broken. `npm run build -w @pingexa/web` then
+  `VITE_PREVIEW_PORT=5173 npm run preview -w @pingexa/web` serves the real
+  artifact on the origin the API already trusts.
 
 **The interval is 5 minutes.** `MONITOR_INTERVAL_SECONDS` exists so tests can
 run an accelerated schedule; the config loader refuses any other value when

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import clsx from 'clsx';
 import { useAuth } from '../state/AuthContext';
 import { useToast } from '../state/ToastContext';
+import { ThemeSelector } from './ThemeSelector';
 import { Alert, Button, Wordmark } from './ui';
 import { api, ApiError } from '../lib/api';
 
@@ -18,7 +19,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="sticky top-0 z-20 border-b border-[var(--border-subtle)] bg-[var(--surface-raised)]/90 backdrop-blur">
-        <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-3 sm:px-6">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 sm:px-6">
           <Link to="/app" className="rounded-md" aria-label="Pingexa dashboard">
             <Wordmark size="sm" />
           </Link>
@@ -28,10 +29,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             <ShellLink to="/app/settings">Settings</ShellLink>
           </nav>
 
-          <div className="ml-auto flex items-center gap-3">
-            <span className="hidden text-xs text-muted sm:inline" title={user?.email}>
+          <div className="ml-auto flex items-center gap-2 sm:gap-3">
+            <span className="hidden text-xs text-muted md:inline" title={user?.email}>
               {user?.email}
             </span>
+            {/* Compact (icon-only) so the header still fits on a phone. */}
+            <ThemeSelector compact />
             <Button variant="secondary" size="sm" onClick={() => void logout()}>
               Sign out
             </Button>

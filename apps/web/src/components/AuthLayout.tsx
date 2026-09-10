@@ -1,5 +1,6 @@
 import { Link } from 'react-router';
 import type { ReactNode } from 'react';
+import { ThemeSelector } from './ThemeSelector';
 import { Card, Wordmark } from './ui';
 
 /** Shared frame for the signup, login, reset and verification screens. */
@@ -16,10 +17,11 @@ export function AuthLayout({
 }) {
   return (
     <div className="flex min-h-dvh flex-col">
-      <header className="mx-auto w-full max-w-5xl px-4 py-5 sm:px-6">
+      <header className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 py-5 sm:px-6">
         <Link to="/" aria-label="Pingexa home">
           <Wordmark />
         </Link>
+        <ThemeSelector compact />
       </header>
       <main className="flex flex-1 items-start justify-center px-4 pt-4 pb-16 sm:items-center sm:pt-0">
         <div className="w-full max-w-md">

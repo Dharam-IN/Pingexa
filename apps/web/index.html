@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light" data-theme-preference="system">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -11,6 +11,50 @@
     />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#4f46e5" />
+
+    <!--
+      Theme bootstrap.
+
+      This runs synchronously in <head>, before the stylesheet applies and long
+      before React mounts, which is the only way to avoid a flash of the wrong
+      theme on a reload. It writes a *resolved* light/dark onto <html> so CSS
+      never has to reason about "system", and keeps the raw preference alongside
+      it so the selector can show the right option.
+
+      The inline <style> below covers the sliver of time before the app's CSS
+      has loaded, so even the very first paint is the right colour.
+
+      Kept deliberately tiny and dependency-free; ThemeContext takes over from
+      here and re-uses the same storage key.
+    -->
+    <style>
+      html { background: #fcfcfd; }
+      html[data-theme='dark'] { background: #1a1a22; }
+    </style>
+    <script>
+      (function () {
+        var STORAGE_KEY = 'pingexa.theme';
+        var preference = 'system';
+        try {
+          var stored = window.localStorage.getItem(STORAGE_KEY);
+          if (stored === 'light' || stored === 'dark' || stored === 'system') {
+            preference = stored;
+          }
+        } catch (error) {
+          /* Private mode or blocked storage: fall back to system. */
+        }
+        var resolved = preference;
+        if (preference === 'system') {
+          resolved =
+            window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light';
+        }
+        var root = document.documentElement;
+        root.setAttribute('data-theme', resolved);
+        root.setAttribute('data-theme-preference', preference);
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

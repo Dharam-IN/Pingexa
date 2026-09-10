@@ -218,3 +218,60 @@ rather than a hope.
 Found while auditing the delivery claims for the handover, not by a failure in
 the field; two integration tests now pin it (a spent row is closed out without
 sending, and a row with one spent attempt resumes at attempt 2 rather than 1).
+
+## D21 — Theming is attribute-driven, and `system` never reaches CSS
+This replaces an earlier decision. The first implementation had no theme
+selector at all and drove dark mode purely from
+`@media (prefers-color-scheme: dark)`, with a comment in `index.css` claiming a
+switch was deliberately omitted. A three-option selector was subsequently
+required, so that reasoning no longer holds and the media-query approach had to
+go with it.
+
+The shape now:
+
+* `<html>` carries a **resolved** `data-theme="light"|"dark"` and, separately,
+  the raw `data-theme-preference="light"|"dark"|"system"`.
+* `system` is resolved to one of the two *before* CSS sees it. Every token and
+  all 50 `dark:` utilities therefore key off one selector
+  (`@custom-variant dark (&:where([data-theme='dark'], …))`), and the compiled
+  stylesheet contains **zero** `prefers-color-scheme` rules.
+
+Why resolve outside CSS rather than combining a media query with an attribute
+override. The combined form needs each `dark:` utility to match two selectors —
+"attribute says dark" *or* "no attribute override and the OS says dark" — which
+is where these implementations usually go wrong: the two halves drift, and a
+toggle silently loses to a media query in some corner. Resolving once, in one
+place, means there is only ever one answer. The cost is that dark mode needs
+JavaScript; for a React SPA that renders nothing without it, that is not a real
+constraint.
+
+Nothing caches the resolved theme. `preference` is state, the OS setting is read
+through `useSyncExternalStore`, and `resolved` is derived from the two on every
+render. An earlier version stored `resolved` and updated it from an effect-based
+listener, which left a genuine gap: the OS can change between the bootstrap
+script reading it and the listener being attached — a remount, or React's
+development double-invoke of effects — and that change was simply lost, leaving
+the app on a stale theme. `useSyncExternalStore` reads its snapshot during
+render, so the gap closes by construction rather than by a reconciliation pass.
+
+## D22 — The focus ring lives on the real input, not on a wrapper
+The theme selector's segments are native radios made invisible so the label can
+carry the visuals. The obvious way to do that — `opacity: 0` on the input, and
+`has-[:focus-visible]:outline-…` utilities mirroring the ring onto the label —
+produced **no focus ring at all**, verified by sampling the painted pixels: the
+utilities compiled into the production bundle but not the dev server's
+stylesheet, and even rewritten as literal CSS with a hard-coded colour the
+wrapper rule never painted.
+
+The input is instead kept full-size with `appearance-none` and transparent
+colours, so it is invisible but has real dimensions and full opacity. The
+app-wide `:focus-visible { outline: 2px solid var(--focus-ring) }` rule then
+paints its ring at exactly the segment's shape — one mechanism for the whole
+app, nothing bespoke. Pixel sampling confirms it: the dark ring measures
+`rgb(165,158,255)`, an exact match for `oklch(0.75 0.15 285)`.
+
+Two things learned worth keeping: `getComputedStyle(el).outlineColor` reports
+`currentColor` regardless of what is set (it returned the element's text colour
+even for `outline-color: red`), so it cannot be used to verify a ring; and
+Tailwind's dev-server output lagged file edits repeatedly during this work, so
+CSS must be verified against the production build.
