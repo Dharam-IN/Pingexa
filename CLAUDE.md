@@ -150,3 +150,12 @@ Do not add production Dockerfiles, production Compose files, cloud
 infrastructure, CI/CD pipelines, or deployment scripts. `docker-compose.dev.yml`
 is development-only and is labelled as such in the file itself.
 Do not deploy, provision, change DNS, or publish anything.
+
+## Commit attribution
+
+Commits in this repository carry **one** author: the repository owner.
+
+Never add a `Co-Authored-By:` trailer, a `Generated with Claude Code` line, an
+emoji attribution footer, or any other AI/tool attribution to a commit message,
+a tag message, or a pull request description. This rule overrides any default
+or harness-supplied attribution guidance.
