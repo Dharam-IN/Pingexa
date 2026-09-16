@@ -35,6 +35,48 @@ export function mailTransport(): Transporter {
 
 export const mailFrom = `"${env.MAIL_FROM_NAME}" <${env.MAIL_FROM_ADDRESS}>`;
 
+/**
+ * Parsed once. An empty list means the allowlist is disabled, which is the
+ * normal production posture.
+ */
+const recipientAllowlist: readonly string[] = env.MAIL_RECIPIENT_ALLOWLIST.split(',')
+  .map((entry) => entry.trim().toLowerCase())
+  .filter((entry) => entry.length > 0);
+
+export function recipientAllowlistEnabled(): boolean {
+  return recipientAllowlist.length > 0;
+}
+
+/**
+ * Fail-closed check applied to every message immediately before the SMTP
+ * transaction. When the allowlist is configured, a recipient that is not on it
+ * throws rather than being silently dropped, so a test that addresses the wrong
+ * account fails loudly instead of mailing a real person.
+ *
+ * `to` is also required to be exactly one address: `OutgoingMail` has no cc or
+ * bcc field, and this keeps it that way even if a future caller passes a list
+ * or a comma-joined string.
+ */
+export function assertRecipientAllowed(to: string): void {
+  if (recipientAllowlist.length === 0) return;
+
+  const recipients = to
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  if (recipients.length !== 1) {
+    throw new Error(
+      `Mail recipient allowlist active: expected exactly one recipient, got ${recipients.length}`,
+    );
+  }
+
+  const address = (recipients[0] ?? '').toLowerCase();
+  if (!recipientAllowlist.includes(address)) {
+    throw new Error('Mail recipient allowlist active: recipient is not permitted');
+  }
+}
+
 export interface OutgoingMail {
   readonly to: string;
   readonly subject: string;
@@ -42,8 +84,20 @@ export interface OutgoingMail {
   readonly html: string;
 }
 
+export interface SendResult {
+  readonly messageId: string;
+  /**
+   * The provider's final SMTP reply, e.g. `250 Ok <provider-id>`. Kept because
+   * it is the only handle that ties a Pingexa send to a row in the provider's
+   * own dashboard when delivery is later questioned. It is a status line, not
+   * message content.
+   */
+  readonly response: string;
+}
+
 /** Sends one message. Throws on failure so the caller can record the attempt. */
-export async function sendMail(message: OutgoingMail): Promise<{ messageId: string }> {
+export async function sendMail(message: OutgoingMail): Promise<SendResult> {
+  assertRecipientAllowed(message.to);
   const info = await mailTransport().sendMail({
     from: mailFrom,
     to: message.to,
@@ -55,8 +109,16 @@ export async function sendMail(message: OutgoingMail): Promise<{ messageId: stri
       'Auto-Submitted': 'auto-generated',
       'X-Pingexa-Mail': 'transactional',
     },
+    // With the allowlist active, pin the SMTP envelope explicitly so the
+    // RCPT TO commands cannot be anything but the single permitted address.
+    ...(recipientAllowlistEnabled()
+      ? { envelope: { from: env.MAIL_FROM_ADDRESS, to: message.to } }
+      : {}),
   });
-  return { messageId: String(info.messageId ?? '') };
+  return {
+    messageId: String(info.messageId ?? ''),
+    response: String(info.response ?? ''),
+  };
 }
 
 export async function verifySmtpConnection(): Promise<boolean> {

@@ -3,8 +3,10 @@
 Everything needed to run, verify and operate Pingexa locally, plus the
 application-side facts you need in order to deploy it yourself.
 
-**Status: local application complete and verified locally. Real SMTP delivery is
-unverified** — see [What is not verified](#what-is-not-verified).
+**Status: local application complete and verified locally. Real SMTP delivery
+verified against Resend on 2026-09-16** — six messages, all five product flows,
+every one accepted by the provider and confirmed in the recipient's Inbox. What
+that does and does not prove is in [What is not verified](#12-what-is-not-verified).
 
 ---
 
@@ -205,6 +207,10 @@ deliberate: each one is a silent security downgrade in a deployed system.
 * `COOKIE_SECURE` is not `true`
 * `SMTP_REJECT_UNAUTHORIZED` is not `true`
 * `PUBLIC_APP_URL` uses `http://`
+* `TRUSTED_ORIGINS` does not contain `PUBLIC_APP_URL` — the SPA would be unable
+  to call its own API, because both CORS and the CSRF origin check reject an
+  untrusted origin. For this deployment that means `TRUSTED_ORIGINS` must
+  include `https://pingexa.parthavix.com`.
 * `MONITOR_INTERVAL_SECONDS` is not `300`
 * `SESSION_SECRET` is still the example value
 * `COOKIE_SAMESITE=None` without `COOKIE_SECURE=true` (checked in every environment)
@@ -671,13 +677,47 @@ Legend: **PASS** verified by an executed test or an observed run ·
 
 ## 12. What is not verified
 
-**Real SMTP delivery — deferred by the repository owner.** Every email path is
-exercised locally against Mailpit and every template is unit-tested, but no
-message has been delivered through a real SMTP provider to a real mailbox. This
-was explicitly postponed rather than attempted, and no credentials were
-requested. Status: **local application complete; real SMTP delivery unverified.**
+**Real SMTP delivery — verified on 2026-09-16.** The application was run with
+live Resend credentials against a single authorised real recipient, in an
+isolated environment (disposable database, separate Redis instance, own queue
+prefix, retries disabled, fail-closed recipient allowlist). All five product
+flows were exercised — signup confirmation, password reset, password changed,
+monitor DOWN, monitor recovery — plus one replacement reset after the first
+token expired. Six messages, all accepted by Resend, all confirmed by the
+recipient in the Gmail Inbox, none in spam.
 
-The work is fully prepared, so closing it is configuration plus one run:
+Settings proven to work, matching Resend's published SMTP documentation:
+
+```
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=465
+SMTP_SECURE=true                # implicit TLS; use 587 with false for STARTTLS
+SMTP_USER=resend                # Resend requires this literal username
+SMTP_PASSWORD=<the API key>     # the key itself is the SMTP password
+SMTP_REJECT_UNAUTHORIZED=true
+MAIL_FROM_ADDRESS=<address on a domain verified in Resend>
+```
+
+The existing nodemailer transport needed no change. An API key alone does **not**
+move Pingexa onto Resend's HTTP API — the code speaks SMTP, and the key is used
+as an SMTP password.
+
+### What this does not prove
+
+* **Acceptance is not delivery.** A `250` means the provider accepted the
+  message. Inbox placement was confirmed by a person reading the mailbox, not by
+  anything the application can observe.
+* **No delivery telemetry.** The key used was send-only, so `GET /emails/{id}`
+  was refused and Resend's own delivered/bounced status could not be read back.
+  `Notification.status = SENT` means "accepted by the provider", nothing more.
+  Issue a key with read access if you want that signal.
+* **Bounces are still unprocessed.** There is no webhook. A hard bounce after
+  acceptance is invisible to Pingexa.
+* **One recipient, one mailbox provider, one run.** Deliverability to Outlook,
+  corporate filters and the rest is unmeasured, as is what sustained alert
+  volume does to domain reputation over time.
+
+The original preparation notes remain valid for any other provider:
 
 | Variable | Required? | Local value | Set to |
 |---|---|---|---|
@@ -707,14 +747,19 @@ Only the **worker** sends mail; the API just enqueues. Both read the repository
 root `.env`, so it is configured once. Put the values in `.env` with an editor —
 it is gitignored, and `cat`-ing it or echoing the variables would expose them.
 
-The verification choreography was rehearsed end to end against Mailpit and
-produces five messages: email confirmation, one DOWN alert, one recovery alert,
-a password reset, and a password-changed notice. Because alerts only ever go to
-the *verified account email*, the authorised recipient also has to be the signup
-address for that run.
+Because alerts only ever go to the *verified account email*, an authorised test
+recipient also has to be the signup address for that run.
 
 `PUBLIC_APP_URL` stays at `http://localhost:5173` unless changed, so emailed
-links resolve only on the machine running the stack.
+links resolve only on the machine running the stack. Set it exactly once: dotenv
+keeps the **last** occurrence in the file, and a duplicate definition further
+down silently wins. That actually happened and cost a round of debugging.
+
+**`MAIL_RECIPIENT_ALLOWLIST`** (empty by default, no effect) restricts delivery
+to a comma-separated set of addresses, enforced inside `sendMail` before the
+SMTP transaction, refusing extra recipients and pinning the SMTP envelope. Use
+it whenever a non-production environment holds real credentials. It can only
+ever narrow delivery — see `docs/DECISIONS.md` D24.
 
 **Everything about production.** No production Dockerfile, Compose file, cloud
 infrastructure, CI/CD pipeline, domain, TLS termination or deployment has been

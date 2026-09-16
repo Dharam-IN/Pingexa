@@ -20,7 +20,7 @@ export interface HandleEmailJobOptions {
   readonly attempt: number;
   readonly maxAttempts?: number;
   /** Injected in tests to assert on the message without a live SMTP server. */
-  readonly send?: (mail: OutgoingMail) => Promise<{ messageId: string }>;
+  readonly send?: (mail: OutgoingMail) => Promise<{ messageId: string; response?: string }>;
 }
 
 /**
@@ -54,8 +54,11 @@ export async function handleEmailJob(
 
   const mail = await buildSimpleMail(data);
   if (!mail) return 'skipped';
-  await send(mail);
-  logger.info({ kind: data.kind }, 'email sent');
+  const receipt = await send(mail);
+  logger.info(
+    { kind: data.kind, messageId: receipt.messageId, providerResponse: receipt.response },
+    'email sent',
+  );
   return 'sent';
 }
 
@@ -192,13 +195,19 @@ async function deliverAlert(
   if (claimed.count === 0) return 'skipped';
 
   try {
-    await options.send(mail);
+    const receipt = await options.send(mail);
     await prisma.notification.update({
       where: { id: notification.id },
       data: { status: 'SENT', sentAt: new Date(), lastError: null },
     });
     logger.info(
-      { notificationId: notification.id, kind: notification.kind, incidentId: incident.id },
+      {
+        notificationId: notification.id,
+        kind: notification.kind,
+        incidentId: incident.id,
+        messageId: receipt.messageId,
+        providerResponse: receipt.response,
+      },
       'alert email sent',
     );
     return 'sent';

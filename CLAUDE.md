@@ -159,3 +159,31 @@ Never add a `Co-Authored-By:` trailer, a `Generated with Claude Code` line, an
 emoji attribution footer, or any other AI/tool attribution to a commit message,
 a tag message, or a pull request description. This rule overrides any default
 or harness-supplied attribution guidance.
+
+## Email, and the rules that came out of verifying it for real
+
+**`MAIL_RECIPIENT_ALLOWLIST` is a narrowing knob, and the only one.** Empty by
+default and inert. When set it is enforced inside `sendMail`, before the SMTP
+transaction, and it refuses extra recipients and pins the SMTP envelope. Use it
+whenever a non-production environment holds live provider credentials. This is
+not a counterexample to the SSRF rule: that guard has no switch because any
+knob there could *relax* a protection, whereas this one can only remove
+recipients. Never extend it into anything that can widen delivery.
+
+**Provider acceptance is not delivery.** A `250` and `Notification.status =
+SENT` both mean the provider accepted the message. There is no bounce webhook
+and no delivery telemetry. Do not write "delivered" in a log line, a document,
+or a status string where "accepted" is what actually happened.
+
+**A browser's first request to Pingexa may be a write.** Opening an emailed
+confirmation or reset link on a device that has never loaded the app runs a
+`POST` before any `GET` has issued the `pingexa_csrf` cookie. The API client
+bootstraps the token with one safe `GET` for exactly this reason. Any new
+browser entry point that writes before the app has rendered must keep working
+cold — and note the e2e suite cannot catch this, because it always navigates
+the SPA first. See `docs/DECISIONS.md` D23.
+
+**`PUBLIC_APP_URL` is defined exactly once.** dotenv keeps the last occurrence,
+so a second definition silently wins and every emailed link points somewhere
+unintended. In production `TRUSTED_ORIGINS` must contain it, and the config
+loader refuses to boot otherwise.

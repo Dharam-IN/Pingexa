@@ -275,3 +275,68 @@ Two things learned worth keeping: `getComputedStyle(el).outlineColor` reports
 even for `outline-color: red`), so it cannot be used to verify a ring; and
 Tailwind's dev-server output lagged file edits repeatedly during this work, so
 CSS must be verified against the production build.
+
+---
+
+## D23 — The SPA bootstraps its own CSRF token before a cold write
+
+`apps/web/src/lib/api.ts` attached `X-CSRF-Token` only when the readable
+`pingexa_csrf` cookie already existed, and silently omitted it otherwise. The
+API issues that cookie on any safe-method response, so the SPA normally holds
+one long before it writes anything — every path that walks through the
+application does a `GET /api/meta` or `GET /api/auth/me` first.
+
+An emailed link is the exception, and it is not a rare one. Opening a
+confirmation or reset link on a device that has never loaded Pingexa makes
+`POST /api/auth/verify-email` the browser's *first ever* request. There is no
+cookie, so no header, so `csrfProtection` rejects it with `csrf_failed` and a
+perfectly valid link looks broken. `VerifyEmailPage` fires that POST from a
+mount effect, which in the observed logs beat the page's own `GET /api/meta` by
+two milliseconds — so even the page's other traffic could not rescue it.
+
+The client now makes one safe `GET /api/meta` when the cookie is missing, then
+reads the token and proceeds. Nothing about the defence changes: the token is
+still server-issued, still random, still compared against the cookie. The
+alternative — exempting the token-redemption endpoints server-side — would have
+removed CSRF protection from the two endpoints that change a password and
+confirm an address, which is precisely backwards.
+
+Found by real delivery, not by a test. The e2e suite navigates the SPA before
+clicking a Mailpit link, so its browser context always already holds the cookie;
+signing a user up over `curl` and then clicking the emailed link in a fresh
+browser is what reproduced it. `apps/web/src/lib/api.csrf.test.ts` now covers
+the cold case, the warm case, and a failed bootstrap.
+
+## D24 — `MAIL_RECIPIENT_ALLOWLIST` can only ever narrow delivery
+
+Verifying a real email provider means running the application with live
+credentials against a real mailbox, which is exactly the situation in which a
+stray seeded account or an old test fixture must not receive anything.
+
+`MAIL_RECIPIENT_ALLOWLIST` is empty by default and has no effect. When set, it
+is enforced inside `sendMail` — the single point every message passes through —
+immediately before the SMTP transaction, and a recipient that is not on the list
+throws rather than being dropped, so a mis-addressed test fails loudly instead
+of mailing a stranger. It additionally refuses more than one recipient and pins
+the SMTP envelope, so no `cc`, `bcc`, or comma-joined address can widen the set.
+
+This is deliberately *not* the mirror image of the SSRF rule. The guard in
+`monitoring/urlGuard.ts` has no off switch because any knob there could relax a
+protection. This knob cannot: absent or malformed, mail behaves normally; set,
+it can only remove recipients. The failure mode of forgetting it in production
+is that email works, and the failure mode of setting it wrongly is that email
+stops — never that mail reaches someone it should not.
+
+## D25 — The provider's SMTP reply is logged, and is not proof of delivery
+
+`sendMail` returns the provider's final SMTP reply alongside the `Message-ID`,
+and both are logged on every send. Against a real provider this is the only
+handle that ties a Pingexa send to a row in the provider's own records when a
+recipient later says nothing arrived; without it a delivery dispute has no
+evidence at either end.
+
+It must not be read as more than it is. A `250` means the provider *accepted*
+the message for delivery. It is not delivery, not inbox placement, and not
+proof the recipient can see it. Pingexa has no bounce webhook and no delivery
+telemetry, so `Notification.status = SENT` means "the provider accepted it",
+and that is the strongest claim the system is entitled to make.

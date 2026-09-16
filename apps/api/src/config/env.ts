@@ -113,6 +113,15 @@ const envSchema = z.object({
   MAIL_FROM_NAME: z.string().min(1).default('Pingexa'),
   MAIL_FROM_ADDRESS: z.email(),
   MAIL_MAX_ATTEMPTS: intFromEnv(1, 20).default(5),
+  /**
+   * Fail-closed recipient allowlist. Empty (the default) means normal
+   * behaviour: mail goes wherever the application addressed it. Set to a
+   * comma-separated list of addresses, `sendMail` refuses to hand anything else
+   * to the transport. It exists so a local run can be pointed at a real email
+   * provider for verification without any possibility of reaching a real user;
+   * it is a restriction only, and can never widen delivery.
+   */
+  MAIL_RECIPIENT_ALLOWLIST: z.string().default(''),
 
   AUTH_RATE_LIMIT_WINDOW_MS: intFromEnv(1000, 86400000).default(900000),
   AUTH_RATE_LIMIT_MAX: intFromEnv(1, 100000).default(15),
@@ -156,6 +165,13 @@ function parseEnv(): Env {
     }
     if (env.PUBLIC_APP_URL.startsWith('http://')) {
       problems.push('PUBLIC_APP_URL must use https when NODE_ENV=production');
+    }
+    // Every emailed link and the status-page URL are built from PUBLIC_APP_URL,
+    // and the browser sends that origin back on writes. If it is not trusted,
+    // CORS and the CSRF origin check reject the SPA's own requests, so the app
+    // is broken in a way that only shows up after deployment.
+    if (!env.TRUSTED_ORIGINS.includes(env.PUBLIC_APP_URL)) {
+      problems.push('TRUSTED_ORIGINS must include PUBLIC_APP_URL when NODE_ENV=production');
     }
     if (env.MONITOR_INTERVAL_SECONDS !== 300) {
       problems.push('MONITOR_INTERVAL_SECONDS must stay at 300 when NODE_ENV=production');

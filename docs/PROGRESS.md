@@ -1,6 +1,6 @@
 # Pingexa — Progress
 
-_Updated: 2026-09-10_
+_Updated: 2026-09-16_
 
 ## State: V1 scope complete and verified locally
 
@@ -9,12 +9,89 @@ _Updated: 2026-09-10_
 | 1. Foundation, database, configuration, authentication | **Complete, verified** |
 | 2. Scheduler, worker, check execution, incidents | **Complete, verified** |
 | 3. Dashboard, charts, monitor management, status page | **Complete, verified** |
-| 4. Email, reliability, security, integration coverage | **Complete, verified** (real SMTP delivery unverified — see Blockers) |
+| 4. Email, reliability, security, integration coverage | **Complete, verified** — real SMTP delivery now verified against Resend |
 | 5. Fresh-setup verification, final fixes, documentation | **Complete** |
 | 6. Light/dark theme support across the application | **Complete, verified** |
 
 `docs/HANDOVER.md` §11 holds the full acceptance checklist with per-item
 evidence. This file is the short version plus the next action.
+
+## Real email delivery verification (2026-09-16)
+
+Ran the application against **Resend** with live credentials and a single real
+recipient. This is the item that had been outstanding since milestone 4.
+
+**Isolation.** A disposable Postgres (`pingexa_mailverify`) and a *separate*
+Redis instance on their own ports and their own `mailverify` queue prefix. The
+development stack was never started — its ports did not listen once during the
+run — so no existing queue was read, drained, or consumed, and no development
+data was touched. Retries were disabled (`MAIL_MAX_ATTEMPTS=1`) and a
+fail-closed `MAIL_RECIPIENT_ALLOWLIST` pinned delivery to one address, proven
+before the first send to reject the demo account, an arbitrary address, a
+comma-appended second recipient, and an empty string.
+
+**Six messages, all accepted by Resend and all confirmed by the recipient in the
+Gmail Inbox — none in spam.**
+
+| Flow | Provider acceptance | Inbox |
+|---|---|---|
+| Signup → confirmation | `250` | confirmed |
+| Password reset | `250` | confirmed |
+| Password reset (replacement, after the first token expired) | `250` | confirmed |
+| Password changed | `250` | confirmed |
+| Monitor DOWN | `250` | confirmed |
+| Monitor RECOVERY | `250` | confirmed |
+
+**Configuration confirmed against Resend's published SMTP documentation:**
+`smtp.resend.com:465`, implicit TLS with `SMTP_SECURE=true`, username the
+literal `resend`, password the API key, `SMTP_REJECT_UNAUTHORIZED=true`, and a
+`MAIL_FROM_ADDRESS` on the owner's verified sending domain. The existing
+nodemailer transport needed no change to work with Resend.
+
+**The incident path was exercised with synthetic `HttpCheckResult` fixtures fed
+to the real `processCheckResult`**, so `runHttpCheck` never ran and the SSRF
+guard, address policy, redirect handling and TLS verification were not touched.
+The three-failure threshold held (no alert at streak 1 or 2), exactly two
+notification rows were created with `attempts=1` each, and the incident closed
+`RECOVERED` with the monitor back to `UP`.
+
+### Defects found by this run, and fixed
+
+1. **Emailed links failed on first click in a cold browser.** The SPA attached
+   `X-CSRF-Token` only if the cookie already existed, so a browser whose first
+   ever request was `POST /api/auth/verify-email` — which is what opening a
+   confirmation link on a second device *is* — got `403 csrf_failed` and a valid
+   link looked broken. Observed live: the same endpoint returned 403, then 200
+   after the fix, on the same emailed token. The client now bootstraps the token
+   with one safe GET; the double-submit defence is unchanged
+   (`docs/DECISIONS.md` D23). Three regression tests added. The e2e suite had
+   missed it because Playwright navigates the SPA before clicking a Mailpit
+   link, so its context always already held the cookie.
+2. **`.env` defined `PUBLIC_APP_URL` twice.** dotenv keeps the last occurrence,
+   so the value actually in use was not the documented one, and every emailed
+   link would have pointed at an origin absent from `TRUSTED_ORIGINS`. The
+   duplicate is gone, `.env.example` warns about it, and the config loader now
+   refuses to boot in production unless `TRUSTED_ORIGINS` contains
+   `PUBLIC_APP_URL`.
+3. **A send left no provider-side trace.** The provider's SMTP reply and
+   `Message-ID` are now logged, which is the only way to correlate a Pingexa
+   send with the provider's own records (`docs/DECISIONS.md` D25).
+
+### Honest limitations of this verification
+
+* **Acceptance is not delivery.** Every `250` above means Resend accepted the
+  message. Inbox placement was confirmed by the recipient reading the mailbox,
+  not by any signal available to the application.
+* **No delivery telemetry.** The API key in use is send-only, so
+  `GET /emails/{id}` is refused and Resend's own delivered/bounced status could
+  not be read back. `Notification.status = SENT` means "accepted by the
+  provider" and nothing stronger.
+* **Bounces are still not processed.** There is no webhook; a hard bounce after
+  acceptance is invisible to Pingexa.
+* **One recipient, one provider, one run.** Deliverability to other mailbox
+  providers (Outlook, corporate filters) is unmeasured.
+* **Long-run reputation is unmeasured.** Six messages say nothing about what a
+  sustained alert volume does to domain reputation.
 
 ## Latest verification run
 
@@ -25,7 +102,7 @@ in `docker-compose.dev.yml`.
 |---|---|
 | `npm run lint` | clean |
 | `npm run typecheck` | clean (shared, api, web) |
-| `npm run test:unit` | **139 passed** (api) + **49 passed** (web) |
+| `npm run test:unit` | **139 passed** (api) + **52 passed** (web) |
 | `npm run test:integration` | **108 passed** against real Postgres + Redis |
 | `npm run test:e2e` | **66 passed** — 33 desktop-chromium + 33 mobile-chromium (includes 24 theme tests) |
 | `npm run build` | clean (shared, api, web) |
@@ -140,23 +217,24 @@ lagged file edits, so CSS must be verified against the production build
 
 ## Blockers
 
-**Real SMTP delivery is deferred at the owner's instruction.** Not blocked by
-anything technical: postponed deliberately, and no credentials were requested.
-Every email path works against Mailpit and every template is unit-tested, but no
-message has gone through a real provider to a real mailbox. The exact variables,
-the three configuration footguns, and the rehearsed verification choreography
-are in `docs/HANDOVER.md` §12.
+**None in the application.** Real SMTP delivery, the last outstanding item, was
+verified against Resend on 2026-09-16: six messages across all five product
+flows, every one accepted by the provider and confirmed in the recipient's
+Inbox. See "Real email delivery verification" above for what that does and does
+not prove.
 
-Nothing else is outstanding.
+What remains is deployment work, which is deliberately outside this repository
+and belongs to the owner. It is listed as requirements, not blockers, in
+"Exact next action" below and in `docs/HANDOVER.md` §10.
 
 ## Exact next action
 
 Nothing in the agreed application scope remains. The next action belongs to the
 repository owner, in this order:
 
-1. When you want it: supply SMTP credentials in `.env` and name an authorised
-   test recipient, and real delivery can be verified in one run (deferred, not
-   blocked).
+1. ~~Verify real SMTP delivery.~~ **Done 2026-09-16** against Resend; see above.
+   Note the account's API key is send-only, so provider-side delivery status is
+   not readable. Issue a key with read access if delivery telemetry is wanted.
 2. Build the production deployment — Dockerfiles, production Compose, server,
    domain, HTTPS, CI/CD. Deliberately **not** in this repository; work through
    `docs/HANDOVER.md` §10 as the requirements list. The two things most likely

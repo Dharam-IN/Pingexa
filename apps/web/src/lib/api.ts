@@ -36,6 +36,37 @@ function readCookie(name: string): string | undefined {
   return match?.[1] ? decodeURIComponent(match[1]) : undefined;
 }
 
+/**
+ * Guarantees a CSRF cookie before an unsafe request.
+ *
+ * The API issues `pingexa_csrf` on any safe-method response, so the SPA
+ * normally has one long before it writes anything. A browser that arrives
+ * *directly* at a write does not: opening an emailed confirmation or reset link
+ * on a device that has never loaded Pingexa runs `POST /api/auth/verify-email`
+ * as its very first request, with no cookie to echo. The API then rejects it
+ * with `csrf_failed` and a valid link looks broken.
+ *
+ * One safe GET closes that gap without weakening anything: the token is still
+ * server-issued, still random, and the double-submit comparison is unchanged.
+ */
+async function ensureCsrfToken(): Promise<string | undefined> {
+  const existing = readCookie(CSRF_COOKIE);
+  if (existing) return existing;
+
+  try {
+    await fetch(`${API_BASE}/api/meta`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      credentials: 'include',
+    });
+  } catch {
+    // Unreachable API. Let the real request below produce the error the caller
+    // should see, rather than a confusing one from this bootstrap call.
+  }
+
+  return readCookie(CSRF_COOKIE);
+}
+
 interface RequestOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
@@ -48,7 +79,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
   if (method !== 'GET') {
-    const token = readCookie(CSRF_COOKIE);
+    const token = await ensureCsrfToken();
     if (token) headers['X-CSRF-Token'] = token;
   }
 
