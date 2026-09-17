@@ -33,6 +33,40 @@ async function ownerWithMonitors(email: string) {
   return { user, publicMonitor, privateMonitor };
 }
 
+/**
+ * Every value in a JSON response, with a readable path, so a privacy assertion
+ * can be made against the parsed body rather than against its text.
+ */
+function* walkNodes(value: unknown, path = '$'): Generator<{ path: string; value: unknown }> {
+  yield { path, value };
+
+  if (Array.isArray(value)) {
+    for (const [index, item] of value.entries()) yield* walkNodes(item, `${path}[${index}]`);
+    return;
+  }
+
+  if (value !== null && typeof value === 'object') {
+    for (const [key, child] of Object.entries(value)) yield* walkNodes(child, `${path}.${key}`);
+  }
+}
+
+/**
+ * Asserts an object carries exactly the fields listed and nothing else.
+ *
+ * Used on the public status page, where the risk is not a known secret slipping
+ * through a filter but an *unknown* one arriving later: a field added to the
+ * projection in good faith that happens to carry a URL, an address or an
+ * upstream error. Comparing the sorted key set makes that a test failure rather
+ * than a silent disclosure.
+ */
+function expectExactKeys(value: unknown, path: string, allowed: readonly string[]): void {
+  expect(value, `${path} should be an object`).toBeTypeOf('object');
+  expect(value, `${path} should not be null`).not.toBeNull();
+  expect(Object.keys(value as object).sort(), `${path} has unexpected fields`).toEqual(
+    [...allowed].sort(),
+  );
+}
+
 describe('status page settings', () => {
   it('creates an unpublished page with an unguessable slug on first read', async () => {
     const user = await createVerifiedUser('sp@monitored.dev');
@@ -158,11 +192,86 @@ describe('public status page', () => {
       'spprivacy@monitored.dev',
       'origin-7.internal',
       'HTTP 503',
-      '503',
       'HTTP_ERROR',
       page.slug,
     ]) {
       expect(serialised, `leaked ${secret}`).not.toContain(secret);
+    }
+
+    /*
+     * The status code is asserted structurally, not by substring.
+     *
+     * A bare `.not.toContain('503')` used to sit in the list above, and it was
+     * a false positive waiting to happen: this body legitimately carries a UUID
+     * incident id and six millisecond-precision ISO timestamps (`generatedAt`,
+     * `windowStart`/`windowEnd` on both uptime windows, and the incident's
+     * `startedAt`). Any `.503Z` millisecond value, or a UUID that happened to
+     * contain `503`, failed the test for no reason — about one run in seventy.
+     *
+     * Replacing it with an exact-shape assertion is both immune to that and
+     * strictly stronger than the substring ever was. A substring list can only
+     * catch the leaks somebody thought to enumerate; this catches *any* new
+     * field appearing in the public projection, whatever it is called and
+     * whatever it contains. Adding a field here is meant to be a deliberate act
+     * that updates this allowlist — that is the point of the boundary.
+     */
+    expectExactKeys(response.body, '$', [
+      'title',
+      'generatedAt',
+      'overall',
+      'monitors',
+      'intervalSeconds',
+    ]);
+
+    for (const [index, monitor] of (response.body.monitors as unknown[]).entries()) {
+      const at = `$.monitors[${index}]`;
+      expectExactKeys(monitor, at, [
+        'id',
+        'name',
+        'displayState',
+        'lastCheckedAt',
+        'uptime24h',
+        'uptime7d',
+        'recentIncidents',
+      ]);
+
+      const summary = monitor as Record<string, unknown>;
+      for (const window of ['uptime24h', 'uptime7d']) {
+        expectExactKeys(summary[window], `${at}.${window}`, [
+          'window',
+          'windowStart',
+          'windowEnd',
+          'upChecks',
+          'downChecks',
+          'recordedChecks',
+          'expectedChecks',
+          'uptimePercent',
+          'coveragePercent',
+          'partialData',
+        ]);
+      }
+
+      for (const [i, incident] of (summary['recentIncidents'] as unknown[]).entries()) {
+        expectExactKeys(incident, `${at}.recentIncidents[${i}]`, [
+          'id',
+          'startedAt',
+          'resolvedAt',
+          'durationSeconds',
+          'ongoing',
+        ]);
+      }
+    }
+
+    /*
+     * The shape check above cannot see a status code smuggled into a field that
+     * legitimately exists, so also assert no value anywhere *is* the code. This
+     * is the type-aware version of the old substring check: it matches the
+     * number 503 and the string "503", and cannot be tripped by a UUID or a
+     * timestamp that merely contains those digits.
+     */
+    for (const node of walkNodes(response.body)) {
+      expect(node.value, `${node.path} exposes the upstream status code`).not.toBe(503);
+      expect(node.value, `${node.path} exposes the upstream status code`).not.toBe('503');
     }
 
     // What it *does* show: name, state, uptime and incident timing.

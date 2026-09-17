@@ -153,6 +153,17 @@ per alert. Never describe it as exactly-once — see `docs/DECISIONS.md` D17.
   `VITE_PREVIEW_PORT=5173 npm run preview -w @pingexa/web` serves the real
   artifact on the origin the API already trusts.
 
+**`packages/shared/dist` is a generated prerequisite, not an optional build
+step.** `@pingexa/shared` points `exports.types` at `dist/index.d.ts` and `main`
+at `dist/index.js`, and `dist` is gitignored. Nothing in `apps/api` or
+`apps/web` can be typechecked or run by Node until it exists, so the root
+`postinstall` builds it alongside the Prisma client, and `npm run typecheck`
+rebuilds it before typechecking the consumers. Do not "simplify" either back to
+`tsc --noEmit` for the shared package: `--noEmit` validates it but emits
+nothing, which leaves every dependent unable to resolve it. A developer machine
+hides this because an earlier `npm run build` left the directory behind; a fresh
+clone and a CI runner do not.
+
 **The interval is 5 minutes.** `MONITOR_INTERVAL_SECONDS` exists so tests can
 run an accelerated schedule; the config loader refuses any other value when
 `NODE_ENV=production`.

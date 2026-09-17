@@ -13,7 +13,7 @@
     "apps/*"
   ],
   "scripts": {
-    "postinstall": "npm run prisma:generate --silent",
+    "postinstall": "npm run prisma:generate --silent && npm run build -w @pingexa/shared --silent",
     "dev:api": "npm run dev -w @pingexa/api",
     "dev:worker": "npm run dev:worker -w @pingexa/api",
     "dev:web": "npm run dev -w @pingexa/web",
@@ -26,7 +26,7 @@
     "seed": "npm run seed -w @pingexa/api",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "typecheck": "npm run typecheck -w @pingexa/shared && npm run typecheck -w @pingexa/api && npm run typecheck -w @pingexa/web",
+    "typecheck": "npm run build -w @pingexa/shared && npm run typecheck -w @pingexa/api && npm run typecheck -w @pingexa/web",
     "test:unit": "npm run test:unit -w @pingexa/api && npm run test:unit -w @pingexa/web",
     "test:integration": "npm run test:integration -w @pingexa/api",
     "test:e2e": "npm run test:e2e -w @pingexa/web",
