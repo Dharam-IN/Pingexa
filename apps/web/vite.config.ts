@@ -28,6 +28,8 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // Source maps stay on everywhere except the production image build, which
+    // sets VITE_SOURCEMAP=false so the deployed bundle does not publish source.
+    sourcemap: process.env['VITE_SOURCEMAP'] !== 'false',
   },
 });

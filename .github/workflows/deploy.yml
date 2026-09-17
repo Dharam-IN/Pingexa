@@ -1,0 +1,241 @@
+# ---------------------------------------------------------------------------
+# Build the production images and deploy them to the production server.
+#
+#   push to main -> CI passes -> build+push images -> SSH -> migrate -> update
+#   -> verify -> succeed, or roll back and fail.
+#
+# It waits for the CI workflow to conclude successfully on the same commit. A
+# red CI never reaches the build job, and the build job never reaches the
+# server. The deploy itself is ordered by deploy/deploy.sh on the server: the
+# migration must exit 0 before the API and worker are touched, so a failed
+# migration leaves the previous release serving rather than causing an outage.
+#
+# Images are tagged sha-<full commit>, which is immutable. The server pins that
+# exact tag, which is what makes `rollback.sh` able to go back to a specific
+# known-good release without a rebuild.
+# ---------------------------------------------------------------------------
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+    branches: [main]
+  # Redeploy or roll forward to a specific commit by hand.
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Full 40-character commit SHA to deploy (defaults to the current HEAD of main)'
+        required: false
+        type: string
+
+# One deploy at a time. Never cancel one in flight: a deploy interrupted between
+# the migration and the container update leaves the stack half-updated.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}
+  NODE_VERSION: '24'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Establishes exactly which commit is being deployed, and refuses to continue
+  # if CI did not pass for it.
+  # ---------------------------------------------------------------------------
+  resolve:
+    name: Resolve commit
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    outputs:
+      sha: ${{ steps.pick.outputs.sha }}
+      tag: ${{ steps.pick.outputs.tag }}
+    steps:
+      - id: pick
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          FALLBACK_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          SHA="${INPUT_SHA:-${RUN_SHA:-$FALLBACK_SHA}}"
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::'$SHA' is not a full 40-character commit SHA"
+            exit 1
+          fi
+          echo "sha=$SHA"     >> "$GITHUB_OUTPUT"
+          echo "tag=sha-$SHA" >> "$GITHUB_OUTPUT"
+          echo "Deploying $SHA as sha-$SHA"
+
+  # ---------------------------------------------------------------------------
+  # Build and push the three production images.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build and push images
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # linux/amd64 only, and deliberately so. `@node-rs/argon2` is a native
+      # addon resolved through per-platform optional dependencies; an image
+      # built for the wrong architecture or libc fails at the first login
+      # attempt, not at build time. This must match the production server.
+      - name: Build and push the application image (API + worker)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.app
+          target: runtime
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-app:${{ needs.resolve.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-app:main
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,scope=app,mode=max
+
+      - name: Build and push the migration image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.app
+          target: migrate
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-migrate:${{ needs.resolve.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-migrate:main
+          cache-from: type=gha,scope=app
+          cache-to: type=gha,scope=migrate,mode=max
+
+      - name: Build and push the web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.web
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-web:${{ needs.resolve.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-web:main
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+  # ---------------------------------------------------------------------------
+  # Ship it.
+  # ---------------------------------------------------------------------------
+  deploy:
+    name: Deploy to production
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://${{ vars.PINGEXA_DOMAIN }}
+    steps:
+      # The compose file and the scripts are configuration, not part of an
+      # image, so the server's copy is refreshed from the commit being deployed.
+      # Nothing here contains a secret; .env.production stays on the server and
+      # is never touched by this workflow.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      # The host key is pinned rather than accepted on first use: without it,
+      # anything that can answer on that address could impersonate the server
+      # and receive the deploy.
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY"  > ~/.ssh/id_deploy
+          printf '%s\n' "$SSH_KNOWN_HOSTS"  > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_deploy ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<EOF
+          Host production
+            HostName ${{ secrets.DEPLOY_HOST }}
+            User ${{ secrets.DEPLOY_USER }}
+            Port ${{ secrets.DEPLOY_PORT || 22 }}
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 30
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Sync the stack definition to the server
+        run: |
+          set -euo pipefail
+          rsync -az --delete-after \
+            --exclude '.env.production' \
+            --exclude '.env.production.example' \
+            --exclude '.deploy.lock' \
+            docker-compose.prod.yml \
+            deploy/Caddyfile \
+            deploy/deploy.sh \
+            deploy/rollback.sh \
+            deploy/backup.sh \
+            production:/opt/pingexa/
+          ssh production 'chmod +x /opt/pingexa/*.sh'
+
+      # GHCR needs credentials on the server too, because the server is what
+      # pulls the images. A read-only PAT with `read:packages`; the workflow's
+      # own GITHUB_TOKEN is not valid outside the runner.
+      - name: Authenticate the server to GHCR
+        run: |
+          set -euo pipefail
+          printf '%s' '${{ secrets.GHCR_READ_TOKEN }}' \
+            | ssh production 'docker login ghcr.io -u ${{ secrets.GHCR_USERNAME }} --password-stdin'
+
+      - name: Deploy
+        run: ssh production "/opt/pingexa/deploy.sh ${{ needs.resolve.outputs.tag }}"
+
+      # deploy.sh already rolls back on its own when verification fails. This
+      # exists for the cases it cannot catch itself — the SSH connection
+      # dropping mid-deploy, or the job being cancelled — where the stack may be
+      # left pointing at a release that was never verified.
+      - name: Roll back if the deploy did not complete
+        if: failure()
+        run: |
+          echo "::warning::deploy did not complete; attempting rollback"
+          ssh production '/opt/pingexa/rollback.sh' || \
+            echo "::error::automatic rollback failed — the server needs manual attention"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Deploy ${{ job.status }}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Commit | \`${{ needs.resolve.outputs.sha }}\` |"
+            echo "| Image tag | \`${{ needs.resolve.outputs.tag }}\` |"
+            echo "| URL | https://${{ vars.PINGEXA_DOMAIN }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

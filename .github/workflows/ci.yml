@@ -1,0 +1,92 @@
+# ---------------------------------------------------------------------------
+# Continuous integration.
+#
+# Runs on every pull request and on every push to main. The deploy workflow
+# waits for this to succeed on main before it builds or ships anything, so this
+# is the gate that stands between a merge and production.
+#
+# The end-to-end suite is deliberately NOT here. It needs the whole stack
+# including Mailpit and runs 66 tests serially across two viewports; making it a
+# deploy blocker trades a lot of wall-clock for little extra signal, since the
+# integration suite already exercises the API against real Postgres and Redis.
+# Run it with the `e2e` workflow or locally.
+# ---------------------------------------------------------------------------
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same branch supersedes an in-flight run, except on main
+# where every commit is a potential deploy and must be judged on its own.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  verify:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      # Default ports here, unlike the development stack: this runner is
+      # disposable and has nothing to collide with. `tests/env.ts` reads
+      # DATABASE_URL and TEST_REDIS_URL, so it follows whatever is set below.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: pingexa
+          POSTGRES_PASSWORD: pingexa_ci_password
+          POSTGRES_DB: pingexa_dev
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U pingexa -d pingexa_dev"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # `npm ci` runs the root postinstall, which generates the Prisma client.
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      # Creates and migrates a disposable `pingexa_test` database from the
+      # committed migrations, so a schema that has drifted from its migrations
+      # fails here rather than during a deploy.
+      - name: Integration tests
+        env:
+          DATABASE_URL: postgresql://pingexa:pingexa_ci_password@127.0.0.1:5432/pingexa_dev
+          TEST_REDIS_URL: redis://127.0.0.1:6379/1
+        run: npm run test:integration
+
+      - name: Build
+        run: npm run build

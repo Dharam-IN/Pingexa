@@ -37,6 +37,7 @@ until you confirm your address.
 | [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) | The fixed V1 scope and its acceptance criteria. |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Why the non-obvious things are the way they are. |
 | [`docs/PROGRESS.md`](docs/PROGRESS.md) | Current state and the next action. |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production architecture, the CI/CD pipeline, and the runbook. |
 
 ## Stack
 
@@ -44,5 +45,12 @@ React + Vite · Node + Express 5 · PostgreSQL + Prisma (committed migrations) �
 Redis + BullMQ · a separate worker process · SMTP, with Mailpit locally.
 
 `docker-compose.dev.yml` provides the backing services for **local development
-and integration testing only** — it is not a production deployment artifact.
-Production deployment is intentionally not part of this repository.
+and integration testing only** — it is not a production deployment artifact and
+is never used on a server.
+
+Production is a separate stack: `docker-compose.prod.yml` and `deploy/`, shipped
+by GitHub Actions on every push to `main`. Caddy terminates TLS and serves the
+SPA and the API on one origin; Postgres and Redis run on an internal Docker
+network with no published ports; the API and the worker share one image with
+different commands; and migrations run as a one-shot container that must succeed
+before the application is updated. See [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).

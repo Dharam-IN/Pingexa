@@ -1,0 +1,68 @@
+# ---------------------------------------------------------------------------
+# Pingexa edge proxy.
+#
+# One origin serves both the SPA and the API. That is not an arbitrary choice:
+# `apps/web/src/lib/api.ts` falls back to an empty API base, so the browser
+# calls `/api` on whatever origin served the page. Single-origin also means the
+# session cookie stays first-party and COOKIE_SAMESITE=Lax is sufficient.
+#
+# Caddy obtains and renews a Let's Encrypt certificate automatically; there is
+# no certbot and no renewal cron. The account key and certificates live in the
+# `caddy_data` volume.
+# ---------------------------------------------------------------------------
+{
+	email {$ACME_EMAIL}
+	# Used by the container healthcheck. Bound to localhost inside the
+	# container only; it is not reachable from the network.
+	admin 127.0.0.1:2019
+}
+
+{$PINGEXA_DOMAIN} {
+	encode zstd gzip
+
+	# HSTS. Only set here, on the TLS listener. Two years, including
+	# subdomains; remove `preload` unless you intend to submit the domain.
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		# Caddy advertises itself otherwise.
+		-Server
+	}
+
+	# The API. `handle` (not `handle_path`) keeps the /api prefix, because the
+	# Express app mounts its routers at /api and the SPA calls /api/... on this
+	# same origin.
+	handle /api/* {
+		reverse_proxy api:4000 {
+			# Exactly one proxy sits in front of the API, which is why the
+			# application is configured with TRUST_PROXY_HOPS=1. If anything
+			# else is ever put in front of this (a CDN, another load
+			# balancer), that value must be raised to match or the IP-keyed
+			# rate limits can be bypassed with a forged X-Forwarded-For.
+			header_up X-Forwarded-For {remote_host}
+			header_up X-Forwarded-Proto {scheme}
+			header_up X-Forwarded-Host {host}
+
+			# The API sets requestTimeout to 30s; give it room to answer.
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 35s
+			}
+		}
+	}
+
+	# Everything else is the SPA, including the client-side routes behind
+	# emailed links (/verify-email, /reset-password) and the public status
+	# pages (/status/:slug). The nginx container does the SPA fallback.
+	handle {
+		reverse_proxy web:8080
+	}
+}
+
+# There is deliberately no http:// block. Caddy already installs the HTTP->HTTPS
+# redirect and the ACME HTTP-01 challenge handler on port 80 for any site it
+# serves over TLS; adding one by hand replaces that with a plain HTTP server and
+# it warned accordingly ("server is listening only on the HTTP port, so no
+# automatic HTTPS will be applied").

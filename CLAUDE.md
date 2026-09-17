@@ -11,6 +11,8 @@ status page.
 * `docs/DECISIONS.md` — why the non-obvious things are the way they are.
 * `docs/HANDOVER.md` — setup, operation, and the deployment-facing requirements.
 * `docs/API.md` — the HTTP contract and the check/uptime/incident semantics.
+* `docs/DEPLOYMENT.md` — the production architecture, the deploy pipeline, and
+  the runbook for operating, rolling back, backing up and restoring it.
 
 On a "continue" request: read those, then check `git status` and the actual code,
 then resume the next unfinished item in `docs/PROGRESS.md`. Do not restart
@@ -39,6 +41,10 @@ apps/web/           React + Vite SPA.
   src/pages/        One file per route.
   e2e/              Playwright, against the whole running stack including Mailpit.
 packages/shared/    Types, zod schemas and product constants used by both sides.
+deploy/             Production deployment. Dockerfiles, Caddy and nginx config,
+                    and the server-side deploy / rollback / backup scripts.
+.github/workflows/  CI (lint, typecheck, unit, integration, build) and the
+                    deploy pipeline that ships main to the production server.
 ```
 
 ## Commands
@@ -62,6 +68,18 @@ npm run test:integration         # needs Postgres + Redis up
 npm run test:e2e                 # needs the whole stack running
 npm run build
 ```
+
+Production images (build and verify locally; CI is what ships them):
+
+```bash
+docker build -f deploy/Dockerfile.app --target runtime -t pingexa-app:local .
+docker build -f deploy/Dockerfile.app --target migrate -t pingexa-migrate:local .
+docker build -f deploy/Dockerfile.web -t pingexa-web:local .
+```
+
+The application image runs a boot smoke test as part of the build: it starts the
+real server with a production-shaped configuration and asserts `/api/health`
+answers, so a broken dependency prune fails the build rather than production.
 
 Mailpit UI: <http://127.0.0.1:58125>. Dev ports are non-default on purpose
 (Postgres 55433, Redis 56379, SMTP 58025) so this project cannot collide with
@@ -145,11 +163,40 @@ Out of scope for this codebase: billing, plans, organisations or teams, custom
 status-page domains, SMS, AI features, mobile apps, multi-region checks, and
 monitoring protocols other than HTTP/HTTPS.
 
-**Production deployment is explicitly out of scope and belongs to the owner.**
-Do not add production Dockerfiles, production Compose files, cloud
-infrastructure, CI/CD pipelines, or deployment scripts. `docker-compose.dev.yml`
-is development-only and is labelled as such in the file itself.
-Do not deploy, provision, change DNS, or publish anything.
+**Production deployment now lives in this repository, and is separate from the
+development stack.** It is `deploy/` plus `docker-compose.prod.yml` plus
+`.github/workflows/`, documented in `docs/DEPLOYMENT.md`. The rules:
+
+* **`docker-compose.dev.yml` is development-only and must not be touched by
+  deployment work.** The two stacks share no file, no volume, no network and no
+  port. Nothing in the production stack may be made to serve a local workflow,
+  and nothing in the dev stack may be made to serve a server.
+* **Secrets never enter git or an image.** The only place production
+  configuration exists is `/opt/pingexa/.env.production` on the server, supplied
+  to containers with `env_file` at start time. `.dockerignore` excludes `.env*`
+  from every build context. Commit `deploy/.env.production.example`, never a
+  filled-in copy.
+* **Deploy the immutable `sha-<40 hex>` tag, never a moving tag.** Rollback works
+  by pinning a previous SHA; `main` cannot express that. `deploy.sh` refuses any
+  other tag shape.
+* **Migrations are a separate one-shot container that must exit 0 before the API
+  and worker are updated.** Never an entrypoint hook, never automatic at process
+  start. A failed migration must leave the previous release serving.
+* **Migrations are forward-only.** Prisma has no down-migrations, so rollback
+  restores code, not schema. Keep migrations additive and forward-compatible;
+  remove a column in the deploy *after* the one that stopped using it.
+* **Postgres and Redis stay on the `internal: true` network and publish no
+  ports.** Caddy is the only service that publishes anything (80/443). The
+  worker needs `egress` as well as `backend` — on `backend` alone it has no
+  route out and every check fails.
+* **`TRUST_PROXY_HOPS` must equal the real number of proxies** (1 today: Caddy).
+  Too low and rate limits key on Caddy's address; too high and a client can
+  forge `X-Forwarded-For` and bypass them.
+
+Still out of scope, and still the owner's: provisioning servers, changing DNS,
+and anything involving Kubernetes, Terraform, ECS or a service mesh. **Do not
+run a deploy, publish anything, or change live infrastructure** — build and
+verify locally, and let CI ship it.
 
 ## Commit attribution
 

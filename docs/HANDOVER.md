@@ -501,7 +501,25 @@ precisely so no cache can outlive a revocation.
 
 ## 10. Production-facing notes for you
 
-These are the application's requirements. Building the deployment is yours.
+These are the application's requirements, stated independently of any particular
+deployment. **The deployment that satisfies them now exists in this repository**
+— `docker-compose.prod.yml`, `deploy/` and `.github/workflows/`, documented in
+[`docs/DEPLOYMENT.md`](DEPLOYMENT.md). Read that for how it is operated; read
+this for what the application needs from any deployment.
+
+How each requirement below is met today:
+
+| Requirement | How the production stack meets it |
+|---|---|
+| `COOKIE_SAMESITE` | `Lax` — Caddy serves the SPA and the API on one origin, so the session cookie is first-party. |
+| `TRUST_PROXY_HOPS` | `1` — exactly one proxy (Caddy) is in front of the API. |
+| SPA fallback | nginx `try_files $uri $uri/ /index.html` in the web image; Caddy routes `/api/*` to the API before the SPA can see it. |
+| Migrations as a separate step | A one-shot `migrate` container behind a Compose profile, which must exit 0 before the API and worker are updated. |
+| Postgres durable and backed up | Named volume `pingexa_pgdata`, plus `deploy/backup.sh` on cron. |
+| Redis AOF + `noeviction` | Set in the `redis` service command; verified in a running stack. |
+| Separate API and worker units | Two services from one image, differing only by `command`. |
+| Termination grace | `stop_grace_period` 30s for the API, 45s for the worker. |
+| `SESSION_SECRET` injected, not baked | `env_file: .env.production`, which lives only on the server. |
 
 **Cookies and sessions.** `COOKIE_SECURE=true` (enforced). Choose
 `COOKIE_SAMESITE` from your topology: `Lax` if the SPA and API are on the same

@@ -215,6 +215,65 @@ lagged file edits, so CSS must be verified against the production build
 (`npm run build -w @pingexa/web` then
 `VITE_PREVIEW_PORT=5173 npm run preview -w @pingexa/web`).
 
+## Production deployment (2026-09-17)
+
+The deployment that `docs/HANDOVER.md` §10 described as the owner's remaining
+work now exists in this repository: `docker-compose.prod.yml`, `deploy/` and
+`.github/workflows/`. It is documented in `docs/DEPLOYMENT.md` and is entirely
+separate from `docker-compose.dev.yml`, which is unchanged.
+
+**One application change was required**, and only one: `dotenv` moved from
+`devDependencies` to `dependencies` in `apps/api/package.json`. It is imported at
+runtime by `src/config/env.ts`, so a production image installed with
+`--omit=dev` crashed at boot with `Cannot find module 'dotenv'`. `vite.config.ts`
+also gained a `VITE_SOURCEMAP` opt-out, defaulting to the existing behaviour, so
+only the production image ships without source maps. No product behaviour
+changed.
+
+**Verified by an executed run, not by reading the files.** A complete rehearsal
+against a local registry, with two releases and a real database:
+
+| Property | Evidence |
+|---|---|
+| Runtime image boots and serves | Build-time smoke test starts the real server with a production config and asserts `/api/health`; verified again against real Postgres and Redis (`/api/ready` → `{"database":true,"redis":true}`) |
+| API and worker share one image | Both run `pingexa-app:<tag>`, differing only by `command`; the worker started and logged `pingexa worker started` |
+| Migrations apply from the committed migrations | All three applied to a disposable database; a second run reported `No pending migrations to apply` |
+| A failed migration is not an outage | Observed for real: the migration failed and the script left the API and worker on the previous release |
+| Deploy, then rollback | `sha-aaa…` → `sha-bbb…` → `rollback.sh` → `sha-aaa…`, each confirmed by `/api/health` reporting the deployed tag |
+| Postgres and Redis are private | Redis refused from the host; `getent hosts` inside the Postgres container fails — the `internal: true` network has no gateway |
+| The worker still has egress | `fetch('https://example.com')` from inside the worker returned HTTP 200 |
+| Data survives container recreation | Rows and keys written, both containers `rm -sf`'d and recreated, both values read back |
+| Redis is configured for BullMQ | `maxmemory-policy noeviction`, `appendonly yes`, auth required |
+| Caddy routing | `/` → SPA, `/app/monitors/x` → SPA fallback, `/api/health` → API, HTTP → HTTPS 308, HSTS present |
+| Backups are restorable | `backup.sh` produced an archive `pg_restore --list` reads, listing all eight tables |
+
+**Defects found while doing it**, all in the deployment code, all fixed:
+
+1. **`--omit=dev` pruned almost nothing.** 113 packages — the entire Prisma CLI
+   and Studio chain — are `devOptional` in the lockfile because they are optional
+   peers of `@prisma/client`, so `--omit=dev` keeps them. The image was 808 MB.
+   `--omit=optional` removes them, at the cost of the per-platform native
+   packages, which are copied back from the full install. Now 545 MB.
+2. **The worker had no route out.** It was on the `internal: true` network only,
+   which would have failed every outbound check and every email. It now joins a
+   separate `egress` network.
+3. **Compose does not interpolate from `env_file`.** `${IMAGE_TAG}` and friends
+   resolve from `--env-file` or a file literally named `.env`; without the flag
+   every deploy command aborted on the required-variable guards.
+4. **`local a=… b=$((a+1))`** trips `set -u`: bash brings every name on the line
+   into scope before assigning any of them.
+5. **Prisma tried to download its schema engine at deploy time.** With OpenSSL
+   installed it correctly resolves `debian-openssl-3.0.x`, which the npm tarball
+   does not carry, and the migration container has no internet by design. The
+   engine is now fetched during the image build and pinned with
+   `PRISMA_SCHEMA_ENGINE_BINARY`.
+6. **`PREVIOUS_IMAGE_TAG` could equal the tag just deployed**, which would make
+   rollback a no-op against the release you are trying to escape.
+
+**Not verified here:** anything requiring the real server — DNS, Let's Encrypt
+issuance, the GitHub Actions run itself, and SSH to production. Those are listed
+as manual steps in `docs/DEPLOYMENT.md` §2.
+
 ## Blockers
 
 **None in the application.** Real SMTP delivery, the last outstanding item, was
@@ -229,16 +288,24 @@ and belongs to the owner. It is listed as requirements, not blockers, in
 
 ## Exact next action
 
-Nothing in the agreed application scope remains. The next action belongs to the
-repository owner, in this order:
+Nothing in the agreed application scope remains, and the deployment is built and
+locally verified. What is left needs the real server and cannot be done from
+this repository:
 
 1. ~~Verify real SMTP delivery.~~ **Done 2026-09-16** against Resend; see above.
    Note the account's API key is send-only, so provider-side delivery status is
    not readable. Issue a key with read access if delivery telemetry is wanted.
-2. Build the production deployment — Dockerfiles, production Compose, server,
-   domain, HTTPS, CI/CD. Deliberately **not** in this repository; work through
-   `docs/HANDOVER.md` §10 as the requirements list. The two things most likely
-   to bite are `TRUST_PROXY_HOPS` and the SPA fallback route.
+2. ~~Build the production deployment.~~ **Done 2026-09-17**; see above and
+   `docs/DEPLOYMENT.md`.
+3. **Provision the server and run the first deploy.** Work through
+   `docs/DEPLOYMENT.md` §2 in order: Docker, the `deploy` user, the SSH key,
+   the firewall, DNS for `pingexa.parthavix.com`, `.env.production`, GHCR
+   credentials, then §3 for the GitHub secrets. The first deploy needs
+   `SKIP_PUBLIC_CHECK=1` because no certificate exists yet.
+4. **Restore a backup once, deliberately** (`docs/DEPLOYMENT.md` §6) before
+   relying on it, and add the cron entry from §2.10.
+5. **Set up an external check** on `https://pingexa.parthavix.com/api/health`
+   from somewhere other than the server itself.
 
 If a future session is asked to continue: read `CLAUDE.md`, then this file, then
 `git status`, and re-run the verification table above before trusting any of it.

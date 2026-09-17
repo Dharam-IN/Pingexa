@@ -139,6 +139,12 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 # ---- Pingexa ----
+# The production secret file lives only on the server. `.env.*` above already
+# matches it at any depth; this negation is needed because `!.env.example`
+# matches that exact basename only, so the production TEMPLATE (which contains
+# no secrets and must be committed) would otherwise be ignored too.
+!deploy/.env.production.example
+
 # Prisma client is generated from the committed schema on install.
 apps/api/src/generated/
 # Build output

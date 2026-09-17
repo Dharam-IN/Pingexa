@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+# Build context exclusions for the production images.
+#
+# The first two entries are the ones that matter for security: `.env` holds real
+# SMTP credentials and a real SESSION_SECRET on a developer machine, and a build
+# context is copied wholesale into the daemon and can end up in a layer. Nothing
+# matching `.env*` is ever sent, and `.env.example` is not needed to build.
+#
+# Everything else here is either regenerated during the build (node_modules,
+# dist, the Prisma client) or is not needed to run the application.
+# ---------------------------------------------------------------------------
+
+.env
+.env.*
+deploy/.env.production
+deploy/.env.production.local
+
+.git
+.github
+.gitignore
+
+node_modules
+**/node_modules
+
+# Build output: the image builds its own.
+apps/api/dist
+apps/web/dist
+packages/shared/dist
+apps/api/src/generated
+
+# Tests and their artifacts. The production images run neither.
+apps/api/tests
+apps/web/e2e
+apps/web/playwright.config.ts
+apps/api/vitest.config.ts
+apps/web/vitest.config.ts
+**/*.test.ts
+**/*.test.tsx
+playwright-report
+test-results
+blob-report
+.vitest-reports
+coverage
+
+# Development-only stack and docs.
+docker-compose.dev.yml
+docs
+README.md
+CLAUDE.md
+scripts
+
+# Editor / OS noise.
+.vscode
+.idea
+.DS_Store
+*.log
