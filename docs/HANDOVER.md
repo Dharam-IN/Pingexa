@@ -533,7 +533,7 @@ outstanding email links.
 front of the API — too low and rate limits key on your proxy's address, too high
 and a client can spoof `X-Forwarded-For` to bypass them entirely. The SPA is a
 static bundle (`apps/web/dist`) and needs SPA-style fallback: any unknown path
-serves `index.html`, because `/app/monitors/:id` and `/status/:slug` are
+serves `index.html`, because `/app/monitors`, `/app/monitors/:id` and `/status/:slug` are
 client-side routes. If you serve the SPA and the API from one origin, front them
 with one reverse proxy and route `/api` to the API.
 
@@ -660,7 +660,7 @@ Legend: **PASS** verified by an executed test or an observed run ·
 
 | Item | Status | Evidence |
 |---|---|---|
-| Landing, auth, dashboard, detail, settings, status page | PASS | e2e visits all of them |
+| Landing, auth, overview, monitors, detail, settings, status page | PASS | e2e visits all of them |
 | Loading, empty, validation, success, error states | PASS | e2e: empty state, field errors, toasts, load-error retry |
 | Real API-backed cards and detail pages | PASS | e2e |
 | Response-time chart with an accessible summary | PASS | e2e asserts the chart's generated text summary |
@@ -679,6 +679,26 @@ Legend: **PASS** verified by an executed test or an observed run ·
 | Visible focus states in both themes | PASS | e2e asserts a ≥1px non-`none` outline reached by keyboard; pixel sampling confirmed the ring is drawn in the theme's `--focus-ring` colour (dark sample `rgb(165,158,255)`, an exact match for its token) |
 | Accessible forms | PASS | every input is label+hint+error wired via ids; switches use `role="switch"` |
 
+### Product experience upgrade (2026-09-20)
+
+Verified on branch `feat/product-experience`, locally only. Nothing about
+monitoring behaviour changed; these rows cover what was added.
+
+| Item | Status | Evidence |
+|---|---|---|
+| Overview shows account-wide health from real rows | PASS | `GET /api/overview`; 12 integration tests cover scoping, bounds and shape |
+| Most urgent state is visually dominant | PASS | e2e asserts the down banner, and that a healthy account gets no alert role |
+| Monitors list: search, filters, result count, sort | PASS | 14 unit tests on `selectMonitors`, plus e2e for search/filter/empty-result |
+| Monitor detail: 24h/7d range, check table, incident timeline | PASS | e2e switches range and asserts the results table |
+| Recent alert delivery in Settings | PASS | `GET /api/alerts`, bounded 1–50; integration asserts `lastError` is never served |
+| Gaps in check history are drawn as gaps | PASS | 13 unit tests on `bucketChecks`; integration asserts 47 empty buckets carry `null` |
+| No aggregate uptime or mean response invented | PASS | median only; `docs/DECISIONS.md` D27 records what was refused and why |
+| Status page: noindex, staleness, paused ≠ outage | PASS | browser probe reads the `robots` meta on the status route and confirms it is absent on the landing page |
+| No horizontal overflow, 4 viewports × 2 themes × 7 routes | PASS | `.review/verify.mjs`, 56 of its 77 checks |
+| No theme flash, either theme | PASS | same probe, reading `data-theme` at the earliest observable moment |
+| Keyboard: sign-in, all tab stops ringed, dialog focus | PASS | same probe: 18 tab stops, 0 without a ring; dialog traps focus and defaults to the safe action |
+| Light/dark token parity enforced | PASS | `apps/web/src/__tests__/designTokens.test.ts` fails if a token exists in one theme only |
+
 ### Build and fresh setup
 
 | Item | Status | Evidence |
@@ -686,7 +706,7 @@ Legend: **PASS** verified by an executed test or an observed run ·
 | Lint clean | PASS | `npm run lint` |
 | Typecheck clean | PASS | `npm run typecheck` |
 | Build clean | PASS | `npm run build` |
-| Test totals | PASS | 139 API unit, 49 web unit, 108 integration, 66 end-to-end |
+| Test totals | PASS | 152 API unit, 97 web unit, 120 integration, 98 end-to-end |
 | Fresh setup from committed migrations on an isolated database | PASS | `./scripts/verify-fresh-setup.sh` — creates a timestamped database, applies only the committed migrations, boots the **built** API on it, signs a user up, then runs the integration suite. Drops only its own database. |
 | Committed migrations match the schema | PASS | `prisma migrate diff` in the fresh-setup script reports "No difference detected" between `schema.prisma` and the migrated database |
 | Hand-written constraints present in a fresh database | PASS | fresh-setup script asserts all four exist and fails if any is missing |

@@ -340,3 +340,117 @@ the message for delivery. It is not delivery, not inbox placement, and not
 proof the recipient can see it. Pingexa has no bounce webhook and no delivery
 telemetry, so `Notification.status = SENT` means "the provider accepted it",
 and that is the strongest claim the system is entitled to make.
+
+## D26 — The signed-in app is an overview, a list and a detail page
+
+The first version had one authenticated screen: a grid of monitor cards at
+`/app`, plus settings. That shape has a ceiling. Everything competes for the
+same visual weight, so a monitor that is **down** looks exactly like one that is
+up except for a small badge — and on a three-monitor account the outage can sit
+below two healthy cards. There was also nowhere for anything that is *about the
+account* rather than about one monitor: no incident history across monitors, no
+"what happened in the last day", no search.
+
+The split is now:
+
+* `/app` — **Overview.** Ordered by urgency rather than by grid balance: an open
+  outage gets a full-width band above everything, then the health counts, then
+  the last 24 hours, then the monitors, then recent incidents. A healthy account
+  can read it in a second and leave.
+* `/app/monitors` — **management.** Search, state filters, sort, a result count,
+  and the pause/edit/delete actions.
+* `/app/monitors/:id` — unchanged in purpose, substantially deeper.
+
+The shell is a sidebar from `lg` up and a drawer below it. A rail was chosen
+over a top bar because the route structure is *fixed at three destinations* —
+teams, billing and regions are all out of scope — so it never needs an overflow
+menu, and the content is wide and read top-to-bottom, which makes horizontal
+space the cheaper thing to spend.
+
+Tradeoff accepted: two clicks to reach a monitor from the overview instead of
+one, and a phone needs a tap to open navigation.
+
+## D27 — `/api/overview` and `/api/alerts`, and why they are not more
+
+The overview needs things that are true *across* an account's monitors: how many
+are down, what happened in the last 24 hours, which incidents are open, and a
+24-hour shape per monitor. `GET /api/monitors/:id` cannot answer any of them
+without the client fanning out one request per monitor and stitching the results
+together in the browser — which is both slower and a place for the arithmetic to
+drift from the server's.
+
+Two read-only endpoints were added. Neither introduces a stored field, a
+migration, or a capability the product did not already have: every number is
+counted from rows the worker already writes.
+
+**What was deliberately *not* added:**
+
+* *An aggregate uptime percentage for the account.* Uptime is only meaningful
+  next to its coverage (D12). A mean of three monitors' percentages, weighted by
+  nothing in particular, is a number that looks authoritative and answers no
+  question. The per-monitor figures stay per-monitor.
+* *A mean response time.* A single ten-second timeout drags a mean far enough to
+  make a healthy account look slow. The overview reports a **median**, and says
+  so.
+* *`Notification.lastError`.* It is an SMTP diagnostic written for the
+  operator's logs and can carry provider hostnames and raw server replies. The
+  UI's question is "did this arrive", which `status` and `attempts` answer.
+
+Both endpoints are scoped by the session user *in the query* — `monitorId in
+(the user's monitors)` and `userId` respectively — so there is no id a caller
+can supply to reach another account. `/api/alerts` is bounded at 50 and defaults
+to 20; a request outside that range is a 400, not a clamp.
+
+Mounted at `/api/overview` and `/api/alerts` rather than as one router at
+`/api`. A router mounted at `/api` with a router-level `requireAuth` answers
+`401` for *every* unmatched `/api/...` path, because the guard runs before the
+request can reach the not-found handler — which turns a typo into an
+authentication error. An integration test that had been asserting a JSON 404 for
+unknown endpoints caught it.
+
+## D28 — Bucketed check history, and gaps drawn as gaps
+
+The overview draws 24 hours of check results per monitor as a strip of bars. The
+data is bucketed **server-side into a fixed 48-bucket grid** rather than sent as
+one point per check.
+
+Fixed buckets rather than per-check points, because the number of points a
+monitor produces depends on how long it has existed and on whether the worker
+kept up. A per-check series therefore makes two monitors incomparable, and makes
+a monitoring gap look like a shorter window instead of a hole.
+
+Each bucket is one of three things, and the third is the whole point:
+
+| bucket | drawn as |
+|---|---|
+| every check passed | the up colour |
+| at least one check failed | the down colour |
+| **no check ran** | the gap colour |
+
+Filling a gap with green is how an uptime product quietly turns *its own*
+outage into the customer's perfect record. `avgResponseTimeMs` is `null` for a
+bucket with no successful check, never `0` — a zero would draw as an
+instantaneous response, which is the opposite of what happened. This is the same
+rule as D12, applied to a picture instead of a percentage.
+
+## D29 — The public status page is `noindex`, and says when it is stale
+
+Two additions, both following from what the page already is.
+
+**`noindex, nofollow` while a status page is open.** The slug is the only access
+control — that is why it is 32 hex characters of CSPRNG output, and why the API
+answers `no-store` so revocation is immediate (D18). A search engine that
+indexed one would undo both: the link would outlive its revocation in someone
+else's cache, and a page shared with a handful of people would become publicly
+discoverable. The tag is added on mount and removed on unmount, so it never
+leaks onto the marketing pages, which *do* want to be indexed.
+
+**A staleness banner past two check intervals.** "Updated 40 minutes ago" in
+small grey text is not enough when the banner above it is green: a reader
+glancing at the page takes the green as *now*. Past ten minutes the page says
+instead that the states below are the last ones recorded, not necessarily the
+current ones.
+
+Also: a **paused** monitor is not reported as an outage. It is a service whose
+state is deliberately not being tracked, and calling that "degraded" would be
+wrong. The page names paused and unknown services separately, above the list.

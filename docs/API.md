@@ -278,7 +278,9 @@ Which monitors appear is controlled per monitor via
 |---|---|---|---|
 | GET | `/api/public/status/:slug` | none | 404 for an unknown slug, an unpublished page, or a malformed slug. |
 
-`Cache-Control: public, max-age=30`. Response:
+`Cache-Control: no-store` — deliberately not cacheable, because the slug is the
+only access control, so unpublishing the page or rotating its slug has to take
+effect at once (`docs/DECISIONS.md` D18). Response:
 
 ```ts
 {
@@ -302,6 +304,95 @@ This projection is built by a single function (`serialisePublicMonitor`) that
 never receives or emits the monitored URL, the owner's email, HTTP status codes,
 failure reasons, or the slug. Only monitors with `isPublic: true` are included,
 and only while the page itself is published.
+
+## Overview and alerts
+
+Read-only aggregates for the signed-in app. Both require a session, are scoped
+by the session user **in the query**, and add no stored field — every number is
+counted from rows the worker already writes. See `docs/DECISIONS.md` D27 for
+what was deliberately left out, and D28 for the bucketing rule.
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/overview` | Account-wide health, 24-hour activity, incidents, per-monitor timeline. |
+| GET | `/api/alerts?limit=1..50` | Recent alert delivery across all monitors. Default 20. |
+
+### GET /api/overview
+
+```ts
+{
+  monitors: MonitorSummary[];      // same shape as GET /api/monitors
+  limit: number; used: number;
+  openIncidents: IncidentWithMonitor[];    // open right now, newest first
+  recentIncidents: IncidentWithMonitor[];  // started in the last 7 days, max 10
+  last24h: ActivitySummary;
+  timelines: MonitorTimeline[];    // one per monitor
+}
+```
+
+`IncidentWithMonitor` is an `IncidentRecord` plus `monitorId` and `monitorName`,
+so a cross-monitor list does not need a second request to be readable.
+
+```ts
+interface ActivitySummary {
+  windowStart: string; windowEnd: string;
+  recordedChecks: number; upChecks: number; downChecks: number;
+  incidentsStarted: number;              // outages that began inside the window
+  medianResponseTimeMs: number | null;   // successful checks only; null when none
+  monitorsWithData: number;
+}
+```
+
+There is deliberately **no aggregate uptime percentage**. Uptime is only
+meaningful beside its coverage (D12), and a mean across monitors would answer no
+question. `medianResponseTimeMs` is a median, not a mean: one ten-second timeout
+would drag a mean far enough to make a healthy account look slow.
+
+```ts
+interface MonitorTimeline {
+  monitorId: string;
+  window: '24h';
+  bucketSeconds: number;   // 1800 — 48 buckets across 24 hours
+  buckets: CheckBucket[];
+}
+
+interface CheckBucket {
+  startedAt: string;   // inclusive
+  endedAt: string;     // exclusive
+  upChecks: number; downChecks: number; recordedChecks: number;
+  avgResponseTimeMs: number | null;   // mean of SUCCESSFUL checks, or null
+}
+```
+
+A bucket in which nothing ran has `recordedChecks: 0` and
+`avgResponseTimeMs: null`. That is a gap and must be drawn as one — not as a
+zero, which would render as an instantaneous response, and not as a success.
+This is D12's rule applied to a picture.
+
+### GET /api/alerts
+
+`?limit=` is an integer between 1 and 50, default 20. A value outside that range
+is `400 validation_failed`, not a silent clamp.
+
+```ts
+{
+  alerts: AlertRecord[];
+  limit: number;
+}
+
+// NotificationRecord plus:
+interface AlertRecord extends NotificationRecord {
+  monitorId: string;
+  monitorName: string;
+  incidentStartedAt: string;
+}
+```
+
+`Notification.lastError` is **never** projected. It is an SMTP diagnostic
+written for the operator's logs and can carry provider hostnames and raw server
+replies; the interface's question is "did this arrive", which `status` and
+`attempts` already answer. `status: "SENT"` means the provider *accepted* the
+message — see D25 — so the UI reads "Accepted", never "Delivered".
 
 ## Rate limits
 

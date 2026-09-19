@@ -24,7 +24,8 @@ reconcile it against the code and a real test run before trusting it.
 ```
 apps/api/           Express API and the worker. Two entrypoints, one codebase.
   src/config/       Environment parsing and cross-field production safety rules.
-  src/domain/       Auth, sessions, tokens, monitors, uptime, status pages, serializers.
+  src/domain/       Auth, sessions, tokens, monitors, uptime, activity
+                    aggregation, status pages, serializers.
   src/monitoring/   SSRF guard, address policy, HTTP check executor, scheduler,
                     result processor (the incident state machine), retention.
   src/http/         Express app, middleware, routes.
@@ -35,10 +36,11 @@ apps/api/           Express API and the worker. Two entrypoints, one codebase.
   tests/unit/       Pure logic. No Postgres, no Redis, no network.
   tests/integration/ Real Postgres + Redis against a disposable `pingexa_test` DB.
 apps/web/           React + Vite SPA.
-  src/lib/          API client, formatters, the polling hook.
+  src/lib/          API client, formatters, the polling hook, the clock hook.
   src/state/        Auth, theme and toast contexts.
-  src/components/   UI kit, chart, cards, app shell.
-  src/pages/        One file per route.
+  src/components/   UI kit (ui.tsx), chart, check strip, app shell.
+  src/pages/        One file per route. `/app` overview, `/app/monitors` list,
+                    `/app/monitors/:id` detail, `/app/settings`.
   e2e/              Playwright, against the whole running stack including Mailpit.
 packages/shared/    Types, zod schemas and product constants used by both sides.
 deploy/             Production deployment. Dockerfiles, Caddy and nginx config,
@@ -114,6 +116,43 @@ RECOVERY row per incident. That unique index bounds alert *intents*, not SMTP
 messages: delivery is at-least-once, bounded at `MAIL_MAX_ATTEMPTS` transactions
 per alert. Never describe it as exactly-once — see `docs/DECISIONS.md` D17.
 
+## UI conventions
+
+**Build from the kit in `apps/web/src/components/ui.tsx`, not from markup.**
+It holds `PageHeader`, `Card`, `SectionHeading`, `Metric`/`MetricCard`, `Badge`,
+`Alert`, `Field`, `SelectField`, `Toggle`, `SegmentedControl`, `Button`,
+`IconButton`, `EmptyState`, `Skeleton`, `Dialog`, `ConfirmDialog`, `TableWrap`
+/`Th`/`Td` and `Hint`. If a page needs a variant, add it there rather than
+hand-rolling one: the reason the status tints were consolidated into tokens is
+that six components had each re-typed the same light/dark pair and one of them
+was wrong.
+
+**Every signed-in route opens with `PageHeader`** (title, description, actions)
+inside `AppShell`'s `max-w-6xl` column. The shell is a sidebar from `lg` up and a
+drawer below it; nav lives in exactly one `<nav aria-label="Main">`.
+
+**One element per datum.** Do not render a desktop table *and* a mobile list —
+whichever is hidden stays in the DOM, so every query for a monitor's state finds
+the invisible copy first. Reflow one grid instead (`MonitorsPage` is the
+worked example).
+
+**A `Dialog` renders its children only while open**, for the same reason: a
+closed `<dialog>` keeps its contents in the document.
+
+**Destructive actions go through `ConfirmDialog`**, which focuses the *cancel*
+action, states what will be lost, and closes on Escape. Never put a delete flush
+against a benign button.
+
+**Absence is not zero.** A missing check, an unmeasured response and an unknown
+uptime render as `—`, `null`, or an explicit sentence — never `0`, never `100%`,
+and never a green bar. `coverageNote()`, `formatMs()`, `formatUptime()` and
+`CheckStrip`'s gap colour all exist to keep that honest. Alert delivery is
+"Accepted", never "Delivered" (`docs/DECISIONS.md` D25).
+
+**Relative times come from `useNow()`**, not from `Date.now()` during render.
+Calling the clock in render is impure — the lint rule catches it — and a
+timestamp that only updates when something else re-renders is a real bug.
+
 **Every component must work in both themes.** The rules, in full:
 
 * Theming is **attribute-driven**. `<html>` carries a resolved
@@ -124,16 +163,24 @@ per alert. Never describe it as exactly-once — see `docs/DECISIONS.md` D17.
   second source of truth that can disagree with the selector.
 * **Colours come from semantic tokens, never from literals.** Surfaces and text
   use `var(--surface)`, `--surface-raised`, `--surface-sunken`,
-  `--border-subtle`, `--text-strong`, `--text-muted`, `--on-brand`,
-  `--switch-knob`, `--focus-ring`, or the `surface` / `text-strong` /
-  `text-muted` / `text-on-brand` utilities built on them. Brand and status
-  ramps (`brand-*`, `up-*`, `down-*`, `warn-*`) are theme-independent scales:
-  pick a different *step* per theme with the `dark:` variant rather than a
-  different colour. The only literal colours in the app are the three `#fff`
-  values inside the `Logo` mark, which is branding and must not invert.
+  `--surface-overlay`, `--border-subtle`, `--border-strong`, `--text-strong`,
+  `--text-muted`, `--text-subtle`, `--on-brand`, `--switch-knob`,
+  `--focus-ring`, or the `surface` / `text-strong` / `text-muted` /
+  `text-subtle` / `text-on-brand` utilities built on them. A tinted *status*
+  block uses the `status-up` / `status-down` / `status-warn` / `status-info` /
+  `status-neutral` utilities, which carry the background, border and text for
+  both themes together — do not re-type the pair inline. Charts use
+  `--chart-grid`, `--chart-axis`, `--chart-line`, `--chart-fail` and
+  `--chart-gap`. Brand and status ramps (`brand-*`, `up-*`, `down-*`, `warn-*`)
+  are theme-independent scales: pick a different *step* per theme with the
+  `dark:` variant rather than a different colour. The only literal colours in
+  the app are the three `#fff` values inside the `Logo` mark, which is branding
+  and must not invert.
 * **A token added to `:root` must also be added to `:root[data-theme='dark']`.**
   Forgetting the second one is the single mistake that breaks a theme, and it
   fails silently in whichever theme you are not looking at.
+  `apps/web/src/__tests__/designTokens.test.ts` enforces this both ways, so the
+  failure is a red test rather than a bug reported months later.
 * **Charts read tokens too.** Recharts strokes and fills take
   `var(--…)` so they re-resolve when the attribute flips; the e2e suite asserts
   the grid stroke actually differs between themes.
@@ -147,6 +194,9 @@ per alert. Never describe it as exactly-once — see `docs/DECISIONS.md` D17.
   `appearance-none` and transparent colours rather than `opacity: 0` or a 1px
   `sr-only` box — an invisible element's outline is invisible too, and mirroring
   the ring onto a wrapper with `:has(:focus-visible)` was found not to paint.
+  **Never put `outline-none` on a real control** to let a wrapper show focus
+  instead; doing exactly that silently removed the ring from every text input in
+  the product, and it was caught by pixel-level checking, not by looking.
 * **Verify against the production build, not the dev server.** Tailwind's dev
   output was repeatedly observed lagging edits during this work, which made a
   correct rule look broken. `npm run build -w @pingexa/web` then

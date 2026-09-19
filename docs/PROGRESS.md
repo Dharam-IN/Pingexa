@@ -1,8 +1,8 @@
 # Pingexa — Progress
 
-_Updated: 2026-09-16_
+_Updated: 2026-09-20_
 
-## State: V1 scope complete and verified locally
+## State: V1 scope complete and verified locally; product experience upgraded
 
 | Milestone | Status |
 |-----------|--------|
@@ -12,9 +12,114 @@ _Updated: 2026-09-16_
 | 4. Email, reliability, security, integration coverage | **Complete, verified** — real SMTP delivery now verified against Resend |
 | 5. Fresh-setup verification, final fixes, documentation | **Complete** |
 | 6. Light/dark theme support across the application | **Complete, verified** |
+| 7. Product experience upgrade | **Complete, verified locally** — branch `feat/product-experience`, not merged |
 
 `docs/HANDOVER.md` §11 holds the full acceptance checklist with per-item
 evidence. This file is the short version plus the next action.
+
+## Product experience upgrade (2026-09-20)
+
+On branch **`feat/product-experience`**, local only — **not pushed, not
+deployed.** The V1 feature scope is unchanged: no new monitoring engine, no new
+product capability, no migration, and no change to authentication, CSRF, rate
+limits, scheduling, incident transitions, alert behaviour, the SSRF guard or the
+public/private data split.
+
+### What changed
+
+**Routes.** `/app` became an operational **Overview**; monitor management moved
+to a new `/app/monitors`; `/app/monitors/:id` and `/app/settings` were rebuilt in
+place. The signed-in shell is a sidebar from `lg` up and a drawer below it, with
+Overview / Monitors / Settings, the account address, sign-out and the theme
+selector. See `docs/DECISIONS.md` D26.
+
+**Backend — two read-only endpoints, no schema change.**
+`GET /api/overview` (account-wide counts, 24-hour activity, open and recent
+incidents, a 24-hour bucketed timeline per monitor) and `GET /api/alerts`
+(bounded recent alert-delivery list). Both are scoped by the session user in the
+query; `/api/alerts` is capped at 50 and rejects a limit outside 1–50. Neither
+serves `Notification.lastError`. Rationale and the things deliberately *not*
+added are in D27; the bucketing rule is D28.
+
+**Honesty carried into the visuals.** A time bucket with no recorded check is
+drawn in a third colour and reports `avgResponseTimeMs: null` — never green,
+never a zero (D28). The overview reports a **median** response time, not a mean.
+There is no aggregate uptime percentage, because one would have no defensible
+meaning across monitors (D27). Alert delivery still reads "Accepted", never
+"Delivered" (D25).
+
+**Public status page** gained `noindex, nofollow` while open, a staleness banner
+past two check intervals, and separate wording for paused and unknown services
+so neither is reported as an outage (D29).
+
+**Design system.** Semantic status/chart tokens replaced six hand-rolled
+light/dark pairs; the kit gained `PageHeader`, `Metric`, `Badge`, `Skeleton`,
+`Dialog`, `ConfirmDialog`, `SegmentedControl`, `SelectField`, table primitives
+and `IconButton`. Conventions are in `CLAUDE.md`.
+
+### Defects found and fixed during this work
+
+1. **Every text input lost its focus ring.** The refactored `Field` put
+   `outline-none` on the control so the wrapper could tint its border on focus.
+   Found by sampling computed outlines, not by looking — the border change made
+   it *look* focused. The app-wide `:focus-visible` rule is back on the real
+   control. Same lesson as D22, now written into `CLAUDE.md`.
+2. **Unknown `/api/...` paths answered 401 instead of 404.** A router mounted at
+   `/api` with a router-level `requireAuth` runs the guard before the request can
+   reach the not-found handler. Caught by the existing integration test for JSON
+   404s. The two new routers are mounted on their own paths (D27).
+3. **A closed `<dialog>` kept its contents in the DOM,** so the add-monitor form's
+   labels and hints were duplicated on the page behind it. `Dialog` now renders
+   children only while open.
+4. **The monitors list rendered a desktop table *and* a mobile list,** leaving
+   whichever was hidden in the document — two state badges per monitor, and every
+   query finding the invisible one. Collapsed to one reflowing grid.
+5. **Table columns collided** (`ATTEMPTS`/`ACCEPTED AT` ran together) because the
+   `Th`/`Td` primitives carried no column gutter.
+
+### Verification (2026-09-20)
+
+Run against a disposable `pingexa_review` database, a `pingexa_review` queue
+prefix and **Mailpit** — never Resend. The repository `.env` still holds live
+Resend credentials from the 2026-09-16 delivery verification, so every process
+in this work was started with `PINGEXA_ENV_FILE=.env.review`, which points SMTP
+at `127.0.0.1:58025`.
+
+| Check | Result |
+|---|---|
+| `npm run lint` | clean |
+| `npm run typecheck` | clean |
+| `npm run test:unit` | **249 passed** (API 152, web 97) |
+| `npm run test:integration` | **120 passed**, real Postgres + Redis |
+| `npm run build` | clean |
+| `npm run test:e2e` | **98 passed** (49 desktop + 49 mobile), against the **production build** |
+| Visual/a11y verification | **77 checks passed** — see below |
+
+The 77 automated visual checks (`.review/verify.mjs`) cover: no horizontal
+overflow on 7 routes × 4 viewports (1440, 1024, 390, 360) × both themes; chart
+labels not clipped; no theme flash on a cold load in either theme; the paused and
+pending states explaining themselves; sign-in completing on the keyboard alone;
+every form control and all 18 tab stops painting a focus ring; and a destructive
+dialog trapping focus, defaulting to the *safe* action, and closing on Escape.
+
+Before/after screenshots: `.review/shots/before` and `.review/shots/after`,
+160 images each — 4 viewports × 2 themes × 20 screens, plus `.review/shots/states`
+for paused, pending, degraded-status-page and the alert table.
+
+**Bundle impact** (gzip, initial route; the Recharts chunk stays lazy and is
+unchanged at 103.46 kB):
+
+| | before | after | delta |
+|---|---|---|---|
+| CSS | 5.98 kB | 7.43 kB | +1.45 kB |
+| JS | 122.50 kB | 134.84 kB | +12.34 kB |
+| **initial total** | **129.63 kB** | **143.42 kB** | **+13.79 kB (+10.6%)** |
+
+### Not done, deliberately
+
+Manual "check now", SSL/domain-expiry or keyword monitoring, any new monitoring
+engine, billing, teams, and arbitrary intervals — all out of scope and all
+untouched. No database migration was needed or added.
 
 ## Real email delivery verification (2026-09-16)
 
@@ -288,9 +393,14 @@ and belongs to the owner. It is listed as requirements, not blockers, in
 
 ## Exact next action
 
-Nothing in the agreed application scope remains, and the deployment is built and
-locally verified. What is left needs the real server and cannot be done from
-this repository:
+The product-experience branch is complete and verified locally. It is **not
+pushed and not deployed**, and needs the owner's review before either.
+
+1. Review `feat/product-experience` (see the section above), then merge and let
+   CI ship it.
+
+The remaining items need the real server and cannot be done from this
+repository:
 
 1. ~~Verify real SMTP delivery.~~ **Done 2026-09-16** against Resend; see above.
    Note the account's API key is send-only, so provider-side delivery status is
