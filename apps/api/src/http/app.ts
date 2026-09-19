@@ -8,6 +8,7 @@ import { logger } from '../lib/logger.js';
 import { authRouter } from './routes/auth.js';
 import { healthRouter } from './routes/health.js';
 import { monitorsRouter } from './routes/monitors.js';
+import { alertsRouter, overviewRouter } from './routes/overview.js';
 import { publicStatusRouter, statusPageRouter } from './routes/statusPage.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimit.js';
@@ -77,6 +78,9 @@ export function createApp(): Express {
   app.use('/api', csrfProtection);
   app.use('/api/auth', authRouter);
   app.use('/api/monitors', apiLimiter, monitorsRouter);
+  // Read-only cross-monitor aggregates for the signed-in app.
+  app.use('/api/overview', apiLimiter, overviewRouter);
+  app.use('/api/alerts', apiLimiter, alertsRouter);
   app.use('/api/status-page', apiLimiter, statusPageRouter);
 
   app.use(notFoundHandler);

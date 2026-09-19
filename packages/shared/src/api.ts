@@ -182,3 +182,93 @@ export interface ReadyResponse {
   status: 'ready' | 'degraded';
   checks: { database: boolean; redis: boolean };
 }
+
+/* ------------------------------------------------------------- Overview ---- */
+
+/**
+ * One time bucket of check results.
+ *
+ * Buckets are the honest way to draw a long window without shipping every row:
+ * each one reports how many checks actually ran inside it. A bucket in which
+ * nothing ran has `recordedChecks: 0` and `avgResponseTimeMs: null` — it is a
+ * gap, and must be drawn as one. It is never an implied zero, and never an
+ * implied success.
+ */
+export interface CheckBucket {
+  /** Inclusive start of the bucket. */
+  startedAt: string;
+  /** Exclusive end of the bucket. */
+  endedAt: string;
+  upChecks: number;
+  downChecks: number;
+  recordedChecks: number;
+  /** Mean response time of the *successful* checks, or `null` if there were none. */
+  avgResponseTimeMs: number | null;
+}
+
+/** A monitor's recent check results, bucketed for display. */
+export interface MonitorTimeline {
+  monitorId: string;
+  window: UptimeWindow;
+  bucketSeconds: number;
+  buckets: CheckBucket[];
+}
+
+/** An incident plus the monitor it belongs to, for cross-monitor lists. */
+export interface IncidentWithMonitor extends IncidentRecord {
+  monitorId: string;
+  monitorName: string;
+}
+
+/**
+ * Aggregate activity over a window, computed from recorded checks only.
+ *
+ * Every field here is a count of rows that exist. Nothing is inferred for a
+ * check that never ran, which is why there is no "availability" figure: the
+ * per-monitor `UptimeSummary` already carries uptime with its coverage, and
+ * averaging those across monitors would produce a number with no defensible
+ * meaning.
+ */
+export interface ActivitySummary {
+  windowStart: string;
+  windowEnd: string;
+  recordedChecks: number;
+  upChecks: number;
+  downChecks: number;
+  /** Incidents whose outage began inside the window. */
+  incidentsStarted: number;
+  /** Median response time across successful checks, or `null` when there were none. */
+  medianResponseTimeMs: number | null;
+  /** How many of the account's monitors recorded at least one check in the window. */
+  monitorsWithData: number;
+}
+
+/** Everything the signed-in overview needs, in one request. */
+export interface OverviewResponse {
+  monitors: MonitorSummary[];
+  limit: number;
+  used: number;
+  /** Incidents that are open right now, newest first. */
+  openIncidents: IncidentWithMonitor[];
+  /** Incidents that started in the last 7 days, newest first, bounded. */
+  recentIncidents: IncidentWithMonitor[];
+  last24h: ActivitySummary;
+  /** 24-hour bucketed check history, one entry per monitor. */
+  timelines: MonitorTimeline[];
+}
+
+/* --------------------------------------------------------------- Alerts ---- */
+
+/** A delivered (or attempted) alert email, with the monitor it was about. */
+export interface AlertRecord extends NotificationRecord {
+  monitorId: string;
+  monitorName: string;
+  /** When the outage this alert describes began. */
+  incidentStartedAt: string;
+}
+
+export interface AlertListResponse {
+  alerts: AlertRecord[];
+  /** The maximum this endpoint will ever return, so the UI can say so. */
+  limit: number;
+}
