@@ -2,7 +2,8 @@ import { Navigate, Route, Routes, useLocation } from 'react-router';
 import type { ReactNode } from 'react';
 import { AppShell } from './components/AppShell';
 import { LoadingBlock } from './components/ui';
-import { DashboardPage } from './pages/DashboardPage';
+import { OverviewPage } from './pages/OverviewPage';
+import { MonitorsPage } from './pages/MonitorsPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
 import { LandingPage } from './pages/LandingPage';
 import { LoginPage } from './pages/LoginPage';
@@ -32,7 +33,17 @@ export function App() {
         element={
           <RequireAuth>
             <AppShell>
-              <DashboardPage />
+              <OverviewPage />
+            </AppShell>
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/app/monitors"
+        element={
+          <RequireAuth>
+            <AppShell>
+              <MonitorsPage />
             </AppShell>
           </RequireAuth>
         }

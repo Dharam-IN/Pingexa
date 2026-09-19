@@ -16,6 +16,14 @@ import { ApiError } from './api';
 export interface PolledResource<T> {
   data: T | null;
   error: string | null;
+  /**
+   * The API's stable error code for the last failure, when there was one.
+   *
+   * Exposed alongside the message so a caller can branch on *what* went wrong
+   * without matching against `error`, which is human copy and may be reworded
+   * at any time. `null` for a non-API failure.
+   */
+  errorCode: string | null;
   /** True until the first load settles, either way. */
   loading: boolean;
   reload(): Promise<void>;
@@ -30,6 +38,7 @@ export function usePolledResource<T>(
   const { intervalMs, fallbackMessage = 'Could not load this data.' } = options;
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const run = useCallback(
@@ -39,10 +48,12 @@ export function usePolledResource<T>(
         if (signal?.aborted) return;
         setData(result);
         setError(null);
+        setErrorCode(null);
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === 'AbortError') return;
         if (signal?.aborted) return;
         setError(caught instanceof ApiError ? caught.message : fallbackMessage);
+        setErrorCode(caught instanceof ApiError ? caught.code : null);
       } finally {
         if (!signal?.aborted) setLoading(false);
       }
@@ -71,5 +82,5 @@ export function usePolledResource<T>(
 
   const reload = useCallback(() => run(), [run]);
 
-  return { data, error, loading, reload, setData };
+  return { data, error, errorCode, loading, reload, setData };
 }

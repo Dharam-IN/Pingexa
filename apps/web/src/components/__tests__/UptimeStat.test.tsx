@@ -60,12 +60,12 @@ describe('UptimeStat', () => {
         label="Uptime · 24 hours"
       />,
     );
-    // The warning is assembled from several interpolated nodes, so assert on
-    // the rendered text of the element rather than on one text node.
+    // The wording comes from `coverageNote`, which every uptime figure in the
+    // app shares; assert the three facts it must carry, not its exact prose.
     const warning = screen.getByText(/coverage/);
     expect(warning.textContent).toContain('50% coverage');
-    expect(warning.textContent).toContain('144 expected checks are missing');
-    expect(warning.textContent).toContain('counted as neither up nor down');
+    expect(warning.textContent).toContain('144 expected checks');
+    expect(warning.textContent).toContain('neither up nor down');
   });
 
   it('says nothing about coverage when it is complete', () => {
