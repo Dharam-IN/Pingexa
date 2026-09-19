@@ -207,13 +207,24 @@ The deploy workflow also does this on every run, so the login stays fresh.
 ### 2.9 First deploy
 
 DNS has propagated but no certificate exists yet, so skip the public HTTPS check
-on this one run:
+on this one run. Run the **Deploy** workflow by hand (Actions -> Deploy -> Run
+workflow) and tick **"First deploy only: skip the public HTTPS check"**.
+
+That input exists only on `workflow_dispatch`. The automatic push-to-main path
+cannot set it, so every ordinary deploy still has to prove the site answers
+publicly before it is allowed to succeed. Never tick it again after this one run.
+
+The equivalent by hand on the server:
 
 ```bash
-# Push to main, or run the Deploy workflow by hand. Then, if the public check
-# is the only thing that failed:
 SKIP_PUBLIC_CHECK=1 /opt/pingexa/deploy.sh sha-<commit>
 ```
+
+Until the first deploy succeeds, `IMAGE_TAG` still holds the all-zero
+placeholder from `.env.production.example`. `deploy.sh` treats that as "no
+release yet", so a failed first deploy reports that there is nothing to roll
+back to instead of trying to pull an image that was never built; `rollback.sh`
+refuses the placeholder for the same reason.
 
 Watch Caddy obtain the certificate:
 
@@ -222,7 +233,7 @@ cd /opt/pingexa
 docker compose --env-file .env.production -f docker-compose.prod.yml logs -f caddy
 ```
 
-Then confirm by hand, and never use `SKIP_PUBLIC_CHECK` again:
+Then confirm by hand:
 
 ```bash
 curl -I https://pingexa.parthavix.com/

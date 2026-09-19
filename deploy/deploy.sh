@@ -31,6 +31,9 @@ PUBLIC_TIMEOUT="${PUBLIC_TIMEOUT:-120}"
 # Encrypt has issued a certificate.
 SKIP_PUBLIC_CHECK="${SKIP_PUBLIC_CHECK:-0}"
 
+# The IMAGE_TAG that .env.production.example ships with. Never a real release.
+PLACEHOLDER_TAG='sha-0000000000000000000000000000000000000000'
+
 log()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 die()  { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -78,10 +81,27 @@ CURRENT_TAG="$(env_get IMAGE_TAG)"
 DOMAIN="$(env_get PINGEXA_DOMAIN)"
 [ -n "$DOMAIN" ] || die "PINGEXA_DOMAIN is not set in $ENV_FILE"
 
+# Until the first deploy succeeds, IMAGE_TAG still holds the placeholder that
+# .env.production.example ships with. It is a well-formed sha-<40 hex> tag, so
+# every shape check accepts it, but no such image was ever built or pushed.
+# Normalise it to "no release yet" once, here, because CURRENT_TAG is both the
+# rollback target and what gets recorded as PREVIOUS_IMAGE_TAG on success: left
+# as-is it makes the first failed deploy try to pull an image that cannot exist,
+# and a first *successful* deploy arm the same trap for the next one.
+if [ "$CURRENT_TAG" = "$PLACEHOLDER_TAG" ]; then
+  CURRENT_TAG=''
+  FIRST_DEPLOY_NOTE=1
+else
+  FIRST_DEPLOY_NOTE=0
+fi
+
 log "Deploying $NEW_TAG"
 info "stack:    $STACK_DIR"
 info "current:  ${CURRENT_TAG:-<none>}"
 info "domain:   $DOMAIN"
+if [ "$FIRST_DEPLOY_NOTE" = "1" ]; then
+  info "IMAGE_TAG still holds the .env.production.example placeholder; treating this as the first deploy"
+fi
 
 if [ "$CURRENT_TAG" = "$NEW_TAG" ]; then
   info "already at $NEW_TAG; continuing anyway so a half-finished deploy is repaired"
@@ -128,7 +148,8 @@ rollback() {
   [ "$ROLLBACK_ARMED" = "1" ] || return 0
   ROLLBACK_ARMED=0
   if [ -z "$CURRENT_TAG" ]; then
-    printf '\n\033[1;31mNo previous tag to roll back to. The stack may be down.\033[0m\n' >&2
+    printf '\n\033[1;31mNo previous release to roll back to. The stack may be down.\033[0m\n' >&2
+    printf '\033[1;31mThis was a first deploy: there is no earlier image to restore.\033[0m\n' >&2
     return 0
   fi
   log "Rolling back to $CURRENT_TAG"

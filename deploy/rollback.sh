@@ -21,6 +21,9 @@ ENV_FILE="$STACK_DIR/.env.production"
 COMPOSE_FILE="$STACK_DIR/docker-compose.prod.yml"
 READY_TIMEOUT="${READY_TIMEOUT:-120}"
 
+# The IMAGE_TAG that .env.production.example ships with. Never a real release.
+PLACEHOLDER_TAG='sha-0000000000000000000000000000000000000000'
+
 log()  { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 info() { printf '    %s\n' "$*"; }
 die()  { printf '\n\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
@@ -53,6 +56,11 @@ TARGET_TAG="${1:-$(env_get PREVIOUS_IMAGE_TAG)}"
 [ -n "$TARGET_TAG" ] || die "no target tag: pass one, or set PREVIOUS_IMAGE_TAG in $ENV_FILE"
 [[ "$TARGET_TAG" =~ ^sha-[0-9a-f]{40}$ ]] \
   || die "refusing to roll back to '$TARGET_TAG': expected an immutable sha-<40 hex> tag"
+# The placeholder has the right shape but names an image that was never built.
+# Pulling it is the failure mode this guard exists to prevent: it means no
+# release has been deployed successfully yet, so there is nothing to go back to.
+[ "$TARGET_TAG" != "$PLACEHOLDER_TAG" ] \
+  || die "refusing to roll back to the .env.production.example placeholder: no previous release has been deployed yet"
 [ "$TARGET_TAG" != "$CURRENT_TAG" ] || die "already running $TARGET_TAG"
 
 log "Rolling back: $CURRENT_TAG -> $TARGET_TAG"

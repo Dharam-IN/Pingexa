@@ -28,6 +28,14 @@ on:
         description: 'Full 40-character commit SHA to deploy (defaults to the current HEAD of main)'
         required: false
         type: string
+      # Only reachable by hand, and deliberately so. The automatic push-to-main
+      # path has no way to set it, so every ordinary deploy still has to prove
+      # the site answers publicly before it is allowed to succeed.
+      skip_public_check:
+        description: 'First deploy only: skip the public HTTPS check (DNS/certificate not ready yet)'
+        required: false
+        default: false
+        type: boolean
 
 # One deploy at a time. Never cancel one in flight: a deploy interrupted between
 # the migration and the container update leaves the stack half-updated.
@@ -221,8 +229,18 @@ jobs:
           printf '%s' '${{ secrets.GHCR_READ_TOKEN }}' \
             | ssh production 'docker login ghcr.io -u ${{ secrets.GHCR_USERNAME }} --password-stdin'
 
+      # SKIP_PUBLIC_CHECK is '1' only when this run was dispatched by hand with
+      # the box ticked; on the workflow_run path `inputs` is empty, so it is '0'
+      # and deploy.sh verifies https://<domain> exactly as it always has.
       - name: Deploy
-        run: ssh production "/opt/pingexa/deploy.sh ${{ needs.resolve.outputs.tag }}"
+        env:
+          SKIP_PUBLIC_CHECK: ${{ inputs.skip_public_check && '1' || '0' }}
+        run: |
+          if [ "$SKIP_PUBLIC_CHECK" = "1" ]; then
+            echo "::warning::public HTTPS verification is being skipped for this run (first deploy)"
+          fi
+          ssh production \
+            "SKIP_PUBLIC_CHECK=$SKIP_PUBLIC_CHECK /opt/pingexa/deploy.sh ${{ needs.resolve.outputs.tag }}"
 
       # deploy.sh already rolls back on its own when verification fails. This
       # exists for the cases it cannot catch itself — the SSH connection
