@@ -87,13 +87,65 @@ export async function signIn(page: Page, email: string, password = TEST_PASSWORD
   await page.getByLabel('Email address').fill(email);
   await page.getByLabel('Password').fill(password);
   await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page.getByRole('heading', { name: 'Your monitors' })).toBeVisible();
+  // Signing in lands on the overview, which is the app's home.
+  await expect(page.getByRole('heading', { name: 'Overview', level: 1 })).toBeVisible();
 }
 
+/** Opens the add-monitor dialog from wherever the caller currently is. */
+export async function openAddMonitor(page: Page): Promise<void> {
+  await page
+    .getByRole('button', { name: /^Add (your first )?monitor$/ })
+    .first()
+    .click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+}
+
+/**
+ * Adds a monitor from the Monitors page and waits for it to appear in the list.
+ *
+ * Always goes via `/app/monitors` so the assertion afterwards is against the
+ * management list, whatever page the test happened to be on.
+ */
 export async function addMonitor(page: Page, name: string, url: string): Promise<void> {
-  await page.getByRole('button', { name: /Add (your first )?monitor/ }).first().click();
-  await page.getByLabel('Name').fill(name);
-  await page.getByLabel('URL to monitor').fill(url);
-  await page.getByRole('button', { name: 'Add monitor' }).click();
-  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+  await page.goto('/app/monitors');
+  await openAddMonitor(page);
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('Name').fill(name);
+  await dialog.getByLabel('URL to monitor').fill(url);
+  await dialog.getByRole('button', { name: 'Add monitor' }).click();
+  await expect(page.getByRole('link', { name, exact: true }).first()).toBeVisible();
+}
+
+/**
+ * Clicks a main-navigation destination, opening the mobile drawer first when
+ * the persistent rail is not on screen.
+ *
+ * The shell shows a sidebar from `lg` up and a drawer below it, so a bare
+ * `getByRole('link', { name })` finds nothing on the mobile project. Tests
+ * should exercise the navigation rather than jumping straight to a URL, so the
+ * viewport difference is handled here once instead of in every spec.
+ */
+export async function navigateTo(
+  page: Page,
+  label: 'Overview' | 'Monitors' | 'Settings',
+): Promise<void> {
+  const drawerToggle = page.getByRole('button', { name: 'Open navigation' });
+  if (await drawerToggle.isVisible()) {
+    await drawerToggle.click();
+  }
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: label }).click();
+  await expect(page.getByRole('heading', { name: label, level: 1 })).toBeVisible();
+}
+
+/**
+ * Signs out, opening the mobile drawer first when the rail is off screen.
+ *
+ * Sign-out lives in the shell's sidebar footer, which is a drawer below `lg`.
+ */
+export async function signOut(page: Page): Promise<void> {
+  const drawerToggle = page.getByRole('button', { name: 'Open navigation' });
+  if (await drawerToggle.isVisible()) {
+    await drawerToggle.click();
+  }
+  await page.getByRole('button', { name: 'Sign out' }).click();
 }

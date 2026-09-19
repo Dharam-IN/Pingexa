@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { signUpAndVerify, uniqueEmail } from './helpers';
+import { addMonitor, navigateTo, signOut, signUpAndVerify, uniqueEmail } from './helpers';
 
 /**
  * Theme behaviour that only a real browser can prove: the theme applied before
@@ -19,8 +19,20 @@ async function bodyBackground(page: Page): Promise<string> {
   return page.evaluate(() => getComputedStyle(document.body).backgroundColor);
 }
 
+/**
+ * Chooses a theme from whichever selector is on screen.
+ *
+ * The signed-in shell renders a rail at `lg` and up and a top bar below it, so
+ * both selectors exist in the DOM and exactly one is visible. Filtering on
+ * visibility picks the one a person would actually click, at either viewport.
+ */
 async function pickTheme(page: Page, name: 'Light' | 'Dark' | 'System'): Promise<void> {
-  await page.getByTestId('theme-selector').first().getByRole('radio', { name }).check();
+  await page
+    .getByTestId('theme-selector')
+    .filter({ visible: true })
+    .first()
+    .getByRole('radio', { name })
+    .check();
 }
 
 test.describe('theme selector', () => {
@@ -55,7 +67,7 @@ test.describe('theme selector', () => {
 
     await expect(page.getByTestId('theme-selector').first()).toBeAttached();
 
-    await page.getByRole('link', { name: 'Settings' }).click();
+    await navigateTo(page, 'Settings');
     await expect(page.getByRole('heading', { name: 'Public status page' })).toBeVisible();
     await expect(page.getByTestId('theme-selector').first()).toBeAttached();
 
@@ -76,7 +88,7 @@ test.describe('persistence', () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
     expect(await page.evaluate((key) => window.localStorage.getItem(key), STORAGE_KEY)).toBe('dark');
 
-    await page.getByRole('link', { name: 'Settings' }).click();
+    await navigateTo(page, 'Settings');
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 
@@ -84,7 +96,7 @@ test.describe('persistence', () => {
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await signOut(page);
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 
     // A new tab in the same browser profile is a subsequent visit.
@@ -186,20 +198,16 @@ test.describe('initial load', () => {
 });
 
 test.describe('both themes render the app', () => {
-  test('dashboard, monitor detail and chart adapt', async ({ page }) => {
+  test('overview, monitor detail and chart adapt', async ({ page }) => {
     test.setTimeout(120_000);
     await signUpAndVerify(page, uniqueEmail('themechart'));
-    await page.getByRole('button', { name: /Add (your first )?monitor/ }).first().click();
-    await page.getByLabel('Name').fill('Theme check');
-    await page.getByLabel('URL to monitor').fill('https://example.com/');
-    await page.getByRole('button', { name: 'Add monitor' }).click();
-    await expect(page.getByRole('heading', { name: 'Theme check', exact: true })).toBeVisible();
+    await addMonitor(page, 'Theme check', 'https://example.com/');
 
     // A chart needs at least one recorded check, so wait for the worker to
     // perform a real one rather than asserting against the empty state.
-    await expect(page.getByText('Up', { exact: true })).toBeVisible({ timeout: 90_000 });
+    await expect(page.getByText('Up', { exact: true }).first()).toBeVisible({ timeout: 90_000 });
 
-    await page.getByRole('link', { name: 'Details' }).click();
+    await page.getByRole('link', { name: 'Details' }).first().click();
     await expect(page.getByRole('heading', { name: 'Response time' })).toBeVisible();
     await expect(page.locator('.recharts-cartesian-grid line').first()).toBeAttached({
       timeout: 30_000,

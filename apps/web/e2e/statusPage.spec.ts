@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { addMonitor, signUpAndVerify, uniqueEmail } from './helpers';
+import { addMonitor, signUpAndVerify, uniqueEmail, navigateTo } from './helpers';
 
 const UP_URL = 'https://example.com/';
 const PRIVATE_URL = 'https://example.com/pingexa-e2e-private-admin-path';
@@ -21,7 +21,7 @@ test.describe('public status page', () => {
     await addMonitor(page, 'Public marketing site', UP_URL);
     await addMonitor(page, 'Private admin panel', PRIVATE_URL);
 
-    await page.getByRole('link', { name: 'Settings' }).click();
+    await navigateTo(page, 'Settings');
     await expect(page.getByRole('heading', { name: 'Public status page' })).toBeVisible();
 
     // Unpublished by default, and the link should not work yet.
@@ -73,7 +73,7 @@ test.describe('public status page', () => {
     await signUpAndVerify(page, uniqueEmail('rotate'));
     await addMonitor(page, 'Rotating site', UP_URL);
 
-    await page.getByRole('link', { name: 'Settings' }).click();
+    await navigateTo(page, 'Settings');
     await page.getByRole('switch', { name: 'Publish my status page' }).click();
     await expect(page.getByText('Status page published.')).toBeVisible();
     await page.getByRole('switch', { name: 'Rotating site' }).click();
@@ -86,8 +86,12 @@ test.describe('public status page', () => {
     await strangerPage.goto(oldPath);
     await expect(strangerPage.getByText('Rotating site')).toBeVisible();
 
+    // Replacing the link is destructive for everyone holding it, so it asks.
     await page.getByRole('button', { name: 'Replace the link' }).click();
-    await expect(page.getByText('A new link was generated. The old one no longer works.')).toBeVisible();
+    await page.getByRole('dialog').getByRole('button', { name: 'Replace the link' }).click();
+    await expect(
+      page.getByText('A new link was generated. The old one stopped working immediately.'),
+    ).toBeVisible();
     const newPath = new URL(await page.locator('code').first().innerText()).pathname;
     expect(newPath).not.toBe(oldPath);
 
@@ -112,21 +116,20 @@ test.describe('settings', () => {
   test('changes the password and keeps the current session', async ({ page }) => {
     const email = uniqueEmail('changepw');
     await signUpAndVerify(page, email);
-    await page.getByRole('link', { name: 'Settings' }).click();
+    await navigateTo(page, 'Settings');
 
     await page.getByLabel('Current password').fill('e2e-password-2026');
     await page.getByLabel('New password', { exact: true }).fill('changed-e2e-pass-7');
     await page.getByRole('button', { name: 'Change password' }).click();
     await expect(page.getByText('Password changed. Other sessions have been signed out.')).toBeVisible();
 
-    // Still signed in here.
-    await page.getByRole('link', { name: 'Monitors' }).click();
-    await expect(page.getByRole('heading', { name: 'Your monitors' })).toBeVisible();
+    // Still signed in here: navigation still works and the app still renders.
+    await navigateTo(page, 'Monitors');
   });
 
   test('rejects a wrong current password with a field error', async ({ page }) => {
     await signUpAndVerify(page, uniqueEmail('badpw'));
-    await page.getByRole('link', { name: 'Settings' }).click();
+    await navigateTo(page, 'Settings');
 
     await page.getByLabel('Current password').fill('not-the-right-one');
     await page.getByLabel('New password', { exact: true }).fill('another-e2e-pass-8');
@@ -137,14 +140,14 @@ test.describe('settings', () => {
   test('shows the account and usage facts', async ({ page }) => {
     const email = uniqueEmail('accountfacts');
     await signUpAndVerify(page, email);
-    await page.getByRole('link', { name: 'Settings' }).click();
-    await expect(page.getByRole('heading', { name: 'Account' })).toBeVisible();
+    await navigateTo(page, 'Settings');
+    await expect(page.getByRole('heading', { name: 'Account', level: 2 })).toBeVisible();
 
-    // Scoped to the page body: the header also shows the address, but hides it
-    // at narrow widths, so an unscoped query resolves differently per viewport.
-    const account = page.getByRole('main');
+    // Scoped to the Account section: the shell shows the address too, and so
+    // does "Monitoring and alerts", so an unscoped query is ambiguous.
+    const account = page.locator('#account');
     await expect(account.getByText(email)).toBeVisible();
     await expect(account.getByText('0 of 3')).toBeVisible();
-    await expect(account.getByText('Yes', { exact: true })).toBeVisible();
+    await expect(account.getByText('Confirmed', { exact: true })).toBeVisible();
   });
 });

@@ -3,6 +3,7 @@ import {
   TEST_PASSWORD,
   extractLinkPath,
   signIn,
+  signOut,
   signUpAndVerify,
   uniqueEmail,
   waitForEmail,
@@ -46,7 +47,7 @@ test.describe('signup, verification, login, logout', () => {
     await page.getByLabel('Password').fill(TEST_PASSWORD);
     await page.getByRole('button', { name: 'Sign in' }).click();
     await expect(page.getByText('Confirm your email address', { exact: true })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Add monitor' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /^Add (your first )?monitor$/ })).toHaveCount(0);
 
     const mail = await waitForEmail(email, /Confirm your Pingexa email address/);
     const link = extractLinkPath(mail.text, /\/verify-email\?token=[^\s]+/);
@@ -54,11 +55,11 @@ test.describe('signup, verification, login, logout', () => {
     await expect(page.getByRole('heading', { name: 'Email confirmed' })).toBeVisible();
 
     await page.getByRole('button', { name: /Go to your monitors|Sign in/ }).click();
-    await expect(page.getByRole('heading', { name: 'Your monitors' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Overview', level: 1 })).toBeVisible();
     // The banner is gone and adding a monitor is now possible.
     await expect(page.getByText('Confirm your email address', { exact: true })).toHaveCount(0);
 
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await signOut(page);
     await expect(page).toHaveURL(/\/(login)?$/);
 
     // A signed-out browser cannot reach the dashboard.
@@ -91,7 +92,9 @@ test.describe('signup, verification, login, logout', () => {
     await page.getByRole('button', { name: 'Create account' }).click();
 
     await expect(page.getByText('Enter a valid email address')).toBeVisible();
-    await expect(page.getByText(/at least 10 characters/i)).toBeVisible();
+    // The field keeps its hint *and* shows the error, so target the error text
+    // exactly rather than a pattern both of them match.
+    await expect(page.getByText('Use at least 10 characters', { exact: true })).toBeVisible();
     // The form did not navigate away.
     await expect(page).toHaveURL(/\/signup$/);
   });
@@ -109,7 +112,7 @@ test.describe('password reset', () => {
   test('resets the password through the emailed link', async ({ page }) => {
     const email = uniqueEmail('reset');
     await signUpAndVerify(page, email);
-    await page.getByRole('button', { name: 'Sign out' }).click();
+    await signOut(page);
 
     await page.goto('/forgot-password');
     await page.getByLabel('Email address').fill(email);
