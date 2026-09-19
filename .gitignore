@@ -156,3 +156,6 @@ test-results/
 blob-report/
 .vitest-reports/
 *.local
+
+# Local review artefacts: screenshots and the capture harness. Never committed.
+.review/

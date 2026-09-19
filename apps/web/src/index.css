@@ -6,6 +6,11 @@
  * One indigo brand colour, three state colours (up / down / unknown), and a
  * neutral ramp. Everything else in the UI is built from these, so a state
  * always looks the same wherever it appears — a card, a chart, a status page.
+ *
+ * The ramps below are *theme-independent scales*. Pick a different step per
+ * theme with the `dark:` variant; never a different hue. The semantic tokens
+ * further down are the opposite: they are redefined per theme, and they are
+ * what components should reach for.
  */
 @theme {
   --color-brand-50: oklch(0.97 0.014 285);
@@ -56,16 +61,31 @@
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 @layer base {
-  /* Light is the base. Every semantic token must be defined here. */
+  /*
+   * Light is the base. Every semantic token must be defined here — and every
+   * one of them must also appear in the dark block below. Adding a token to one
+   * and not the other is the single mistake that breaks a theme, and it fails
+   * silently in whichever theme you are not looking at.
+   */
   :root {
     color-scheme: light;
 
+    /* Surfaces, from furthest back to nearest the reader. */
     --surface: oklch(0.99 0.002 285);
     --surface-raised: oklch(1 0 0);
     --surface-sunken: oklch(0.97 0.004 285);
+    /* Menus, popovers and dialogs, which sit above everything else. */
+    --surface-overlay: oklch(1 0 0);
+    /* The scrim behind a modal dialog. */
+    --scrim: oklch(0.24 0.02 285 / 0.45);
+
     --border-subtle: oklch(0.91 0.006 285);
+    --border-strong: oklch(0.84 0.01 285);
+
     --text-strong: oklch(0.24 0.02 285);
     --text-muted: oklch(0.46 0.015 285);
+    /* Third-level text: timestamps, units, axis labels. Still AA on --surface. */
+    --text-subtle: oklch(0.55 0.014 285);
 
     /* Foreground for anything sitting on a brand-coloured fill. */
     --on-brand: oklch(1 0 0);
@@ -73,11 +93,61 @@
     --switch-knob: oklch(1 0 0);
     /* Focus indicator. Must stay visible against every surface. */
     --focus-ring: oklch(0.54 0.21 285);
+
+    /*
+     * Elevation. Defined as whole shadows rather than a colour, because a dark
+     * theme needs a different *shape* of shadow, not a darker one: a light-mode
+     * drop shadow is invisible on a dark surface, so dark leans on a lifted
+     * border instead.
+     */
+    --shadow-raised: 0 1px 2px oklch(0.24 0.02 285 / 0.06), 0 1px 3px oklch(0.24 0.02 285 / 0.1);
+    --shadow-overlay: 0 4px 6px oklch(0.24 0.02 285 / 0.05), 0 10px 20px oklch(0.24 0.02 285 / 0.12);
+
+    /*
+     * Status tokens.
+     *
+     * Every tinted status block in the app — badges, alerts, toasts, the failure
+     * note on a card — used to hand-roll its own `bg-up-50 dark:bg-up-700/25`
+     * pair. Six components repeating the same four pairs is six places for the
+     * dark half to be forgotten, so the pairs live here once.
+     */
+    --status-up-surface: oklch(0.96 0.03 165);
+    --status-up-border: oklch(0.66 0.15 165 / 0.4);
+    --status-up-text: oklch(0.45 0.11 165);
+
+    --status-down-surface: oklch(0.96 0.025 25);
+    --status-down-border: oklch(0.62 0.2 25 / 0.4);
+    --status-down-text: oklch(0.46 0.18 25);
+
+    --status-warn-surface: oklch(0.97 0.04 85);
+    --status-warn-border: oklch(0.75 0.14 85 / 0.45);
+    --status-warn-text: oklch(0.44 0.1 70);
+
+    --status-info-surface: oklch(0.97 0.014 285);
+    --status-info-border: oklch(0.89 0.055 285);
+    --status-info-text: oklch(0.42 0.17 285);
+
+    --status-neutral-surface: oklch(0.97 0.004 285);
+    --status-neutral-border: oklch(0.91 0.006 285);
+    --status-neutral-text: oklch(0.46 0.015 285);
+
+    /*
+     * Charts read tokens too, so a Recharts stroke re-resolves when the theme
+     * attribute flips instead of being baked in at render time.
+     */
+    --chart-grid: oklch(0.91 0.006 285);
+    --chart-axis: oklch(0.55 0.014 285);
+    --chart-line: oklch(0.62 0.19 285);
+    --chart-area: oklch(0.62 0.19 285 / 0.12);
+    --chart-fail: oklch(0.62 0.2 25);
+    /* A bucket in which no check ran. Neither up nor down — absence. */
+    --chart-gap: oklch(0.93 0.005 285);
   }
 
   /*
-   * Dark redefines only what changes. Adding a token above without adding it
-   * here is the one mistake that breaks a theme, so keep the two lists aligned.
+   * Dark redefines only what changes. Keep this list aligned with the one above:
+   * a token present in exactly one of the two blocks is a bug you will not see
+   * until you switch themes.
    */
   :root[data-theme='dark'] {
     color-scheme: dark;
@@ -85,14 +155,56 @@
     --surface: oklch(0.19 0.012 285);
     --surface-raised: oklch(0.23 0.014 285);
     --surface-sunken: oklch(0.16 0.01 285);
+    --surface-overlay: oklch(0.26 0.016 285);
+    --scrim: oklch(0.12 0.01 285 / 0.68);
+
     --border-subtle: oklch(0.33 0.014 285);
+    --border-strong: oklch(0.42 0.018 285);
+
     --text-strong: oklch(0.96 0.004 285);
     --text-muted: oklch(0.76 0.012 285);
+    --text-subtle: oklch(0.66 0.012 285);
 
     --on-brand: oklch(1 0 0);
     --switch-knob: oklch(1 0 0);
     /* Brighter than the light-mode ring so it reads on a dark surface. */
     --focus-ring: oklch(0.75 0.15 285);
+
+    /* Dark carries elevation on a border, not a shadow: see the note above. */
+    --shadow-raised: 0 1px 2px oklch(0 0 0 / 0.4);
+    --shadow-overlay: 0 10px 30px oklch(0 0 0 / 0.55);
+
+    /*
+     * Status: same hue, different step. The surfaces are low-chroma tints of the
+     * dark background rather than the light ramp dimmed, and the text steps are
+     * the light end of each ramp so contrast stays high.
+     */
+    --status-up-surface: oklch(0.45 0.11 165 / 0.25);
+    --status-up-border: oklch(0.56 0.14 165);
+    --status-up-text: oklch(0.88 0.09 165);
+
+    --status-down-surface: oklch(0.46 0.18 25 / 0.28);
+    --status-down-border: oklch(0.55 0.21 25);
+    --status-down-text: oklch(0.88 0.08 25);
+
+    --status-warn-surface: oklch(0.52 0.12 70 / 0.28);
+    --status-warn-border: oklch(0.66 0.14 70);
+    --status-warn-text: oklch(0.9 0.08 85);
+
+    --status-info-surface: oklch(0.32 0.11 285 / 0.45);
+    --status-info-border: oklch(0.47 0.19 285);
+    --status-info-text: oklch(0.9 0.05 285);
+
+    --status-neutral-surface: oklch(0.16 0.01 285);
+    --status-neutral-border: oklch(0.33 0.014 285);
+    --status-neutral-text: oklch(0.76 0.012 285);
+
+    --chart-grid: oklch(0.33 0.014 285);
+    --chart-axis: oklch(0.66 0.012 285);
+    --chart-line: oklch(0.71 0.14 285);
+    --chart-area: oklch(0.71 0.14 285 / 0.16);
+    --chart-fail: oklch(0.62 0.2 25);
+    --chart-gap: oklch(0.27 0.012 285);
   }
 
   html {
@@ -118,6 +230,11 @@
     border-radius: 4px;
   }
 
+  /*
+   * Motion is opt-out at the platform level. The app only animates to clarify a
+   * state change (a spinner, a menu opening), so removing all of it costs
+   * nothing but a little polish.
+   */
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -125,13 +242,20 @@
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
     }
   }
 }
 
+/* ------------------------------------------------------------- utilities -- */
+
 @utility surface {
   background: var(--surface-raised);
   border: 1px solid var(--border-subtle);
+}
+
+@utility surface-sunken {
+  background: var(--surface-sunken);
 }
 
 @utility text-muted {
@@ -142,12 +266,59 @@
   color: var(--text-strong);
 }
 
+@utility text-subtle {
+  color: var(--text-subtle);
+}
+
 @utility text-on-brand {
   color: var(--on-brand);
 }
 
 @utility bg-switch-knob {
   background: var(--switch-knob);
+}
+
+@utility shadow-raised {
+  box-shadow: var(--shadow-raised);
+}
+
+@utility shadow-overlay {
+  box-shadow: var(--shadow-overlay);
+}
+
+/*
+ * Status surfaces as one utility each, so a component asks for "the down
+ * treatment" instead of restating four colours and hoping the dark half was
+ * remembered.
+ */
+@utility status-up {
+  background: var(--status-up-surface);
+  border-color: var(--status-up-border);
+  color: var(--status-up-text);
+}
+
+@utility status-down {
+  background: var(--status-down-surface);
+  border-color: var(--status-down-border);
+  color: var(--status-down-text);
+}
+
+@utility status-warn {
+  background: var(--status-warn-surface);
+  border-color: var(--status-warn-border);
+  color: var(--status-warn-text);
+}
+
+@utility status-info {
+  background: var(--status-info-surface);
+  border-color: var(--status-info-border);
+  color: var(--status-info-text);
+}
+
+@utility status-neutral {
+  background: var(--status-neutral-surface);
+  border-color: var(--status-neutral-border);
+  color: var(--status-neutral-text);
 }
 
 /* The "ping" motif: one slow ring, used sparingly on live UP states only. */
@@ -165,4 +336,19 @@
 
 @utility animate-ping-ring {
   animation: pingexa-ring 2.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Skeleton shimmer. One keyframe, reused by every loading placeholder. */
+@keyframes pingexa-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@utility animate-skeleton {
+  animation: pingexa-pulse 1.6s ease-in-out infinite;
 }

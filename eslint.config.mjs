@@ -13,6 +13,9 @@ export default tseslint.config(
       'apps/web/playwright-report/**',
       'apps/web/test-results/**',
       'packages/*/dist/**',
+      // Local, uncommitted review artefacts: the screenshot harness and its
+      // output. Not shipped, not part of the product source.
+      '.review/**',
     ],
   },
   js.configs.recommended,
