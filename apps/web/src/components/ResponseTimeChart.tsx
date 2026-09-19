@@ -78,13 +78,13 @@ export function ResponseTimeChart({
       <div style={{ height }} role="img" aria-label={summary}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={points} margin={{ top: 8, right: 12, bottom: 4, left: -12 }}>
-            <CartesianGrid stroke="var(--border-subtle)" strokeDasharray="3 3" vertical={false} />
+            <CartesianGrid stroke="var(--chart-grid)" strokeDasharray="3 3" vertical={false} />
             <XAxis
               dataKey="t"
               type="number"
               domain={['dataMin', 'dataMax']}
               tickFormatter={(value: number) => formatTime(new Date(value).toISOString())}
-              stroke="var(--text-muted)"
+              stroke="var(--chart-axis)"
               fontSize={11}
               tickMargin={8}
               minTickGap={40}
@@ -95,14 +95,14 @@ export function ResponseTimeChart({
               tick, rendering as a clipped "ns" — visible in both themes.
             */}
             <YAxis
-              stroke="var(--text-muted)"
+              stroke="var(--chart-axis)"
               fontSize={11}
               tickFormatter={(value: number) => `${value} ms`}
               width={62}
             />
             <Tooltip
               contentStyle={{
-                background: 'var(--surface-raised)',
+                background: 'var(--surface-overlay)',
                 border: '1px solid var(--border-subtle)',
                 borderRadius: 8,
                 fontSize: 12,
@@ -120,7 +120,7 @@ export function ResponseTimeChart({
             <Line
               type="monotone"
               dataKey="ms"
-              stroke="var(--color-brand-500)"
+              stroke="var(--chart-line)"
               strokeWidth={2}
               dot={false}
               // Do not bridge across a failure: the line breaks where we have no
@@ -135,7 +135,7 @@ export function ResponseTimeChart({
                 x={point.t}
                 y={0}
                 r={4}
-                fill="var(--color-down-500)"
+                fill="var(--chart-fail)"
                 stroke="var(--surface-raised)"
                 strokeWidth={1.5}
               />
