@@ -1,0 +1,133 @@
+name: Bug report
+description: Something in Pingexa does not behave the way it is documented to.
+title: '[Bug]: '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        **Do not report a security vulnerability here.** Follow
+        [SECURITY.md](https://github.com/Dharam-IN/Pingexa/blob/main/SECURITY.md)
+        instead and use private reporting.
+
+        **Never paste a secret into this form.** No `.env` file, API key,
+        session cookie, verification or reset token, database dump, or another
+        person's email address or private URL. Redact them — `https://<my-site>`
+        and `user@<my-domain>` are perfectly good for a bug report.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you file
+      options:
+        - label: I have read the [known limitations](https://github.com/Dharam-IN/Pingexa/blob/main/docs/HANDOVER.md#13-known-limitations) and [SUPPORT.md](https://github.com/Dharam-IN/Pingexa/blob/main/SUPPORT.md)
+          required: true
+        - label: I searched existing issues and did not find this one
+          required: true
+        - label: This is not a security vulnerability
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you saw, and what you expected instead.
+      placeholder: |
+        I added a monitor for my site and it reports DOWN, but the site loads
+        in a browser. The check result says "Redirected (HTTP 301)".
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The smallest sequence that shows the problem. If it involves a specific
+        URL, describe its shape rather than naming a private host — for example
+        "an https:// URL that 301s to a www subdomain".
+      placeholder: |
+        1. Sign in and confirm the account email
+        2. Add a monitor for an https:// URL that returns 301
+        3. Wait for the first check
+        4. The monitor shows DOWN
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of Pingexa?
+      multiple: true
+      options:
+        - Web app (signed-in pages)
+        - Public status page
+        - Signup / login / email confirmation / password reset
+        - Monitoring and checks
+        - Incidents and alert email
+        - HTTP API
+        - Worker / scheduler
+        - Self-hosting, Docker or deployment
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how-running
+    attributes:
+      label: How are you running Pingexa?
+      options:
+        - Local development stack (docker-compose.dev.yml + npm run dev:*)
+        - Self-hosted (docker-compose.selfhost.yml)
+        - Self-hosted (my own deployment)
+        - The hosted instance at pingexa.parthavix.com
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      description: |
+        The commit SHA you are running. `git rev-parse --short HEAD`, or the
+        `version` field from `GET /api/health`.
+      placeholder: '259811f'
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Node.js version, Docker version if relevant.
+      placeholder: |
+        OS: Ubuntu 24.04
+        Node: v24.19.0  (node --version)
+        Docker: 27.3.1  (docker --version)
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or error output
+      description: |
+        API or worker log lines around the failure, or the browser console.
+        **Redact anything sensitive first** — tokens, cookies, email addresses
+        and private hostnames. Pingexa's own logger already redacts secrets by
+        key name, but check before you paste.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots with demo data, a theory about the cause, a workaround you found.
+    validations:
+      required: false

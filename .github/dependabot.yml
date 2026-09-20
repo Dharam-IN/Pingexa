@@ -1,0 +1,98 @@
+# Dependabot configuration for Pingexa.
+#
+# Deliberately restrained. This is a single-maintainer repository, so a noisy
+# update bot is worse than a slightly stale one: a wall of pull requests gets
+# ignored wholesale, which is how a real advisory gets missed.
+#
+# Three ecosystems, because three are all that exist here:
+#
+#   npm             one root lockfile for the whole workspace
+#                   (`packages/*` and `apps/*`), so one entry covers it.
+#   github-actions  .github/workflows/ci.yml and deploy.yml.
+#   docker          deploy/Dockerfile.app and deploy/Dockerfile.web.
+#
+# NOT configured, on purpose:
+#   * The base images in docker-compose.prod.yml, docker-compose.dev.yml and
+#     docker-compose.selfhost.yml (postgres, redis, caddy, mailpit). They are
+#     pinned to a major on purpose — a Postgres major bump is a dump and
+#     restore, not an image change (see docs/DEPLOYMENT.md §9) — and reviewing
+#     that by hand is the right amount of friction.
+#   * Separate entries per workspace. npm workspaces share one lockfile;
+#     a second entry would produce duplicate pull requests.
+#
+# Security updates are never grouped and are not subject to the open-PR limit,
+# so an advisory still arrives as its own pull request.
+
+version: 2
+
+updates:
+  # ---- npm ----------------------------------------------------------------
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
+    labels: ['dependencies']
+    commit-message:
+      prefix: 'chore(deps)'
+      prefix-development: 'chore(deps-dev)'
+      include: scope
+    groups:
+      # Everything that only affects the build and the test suites. These are
+      # low risk and there are a lot of them, so one pull request a week.
+      dev-tooling:
+        dependency-type: development
+        update-types: ['minor', 'patch']
+      # Runtime minor/patch, batched. A runtime major stays on its own so it
+      # gets read properly.
+      runtime-minor-patch:
+        dependency-type: production
+        update-types: ['minor', 'patch']
+    ignore:
+      # Pinned to 5.9.x on purpose: typescript-eslint@8 declares
+      # `typescript >=4.8.4 <6.1.0`, and lint, typecheck, Vite and Prisma all
+      # have to agree. See docs/DECISIONS.md D3.
+      - dependency-name: typescript
+        update-types: ['version-update:semver-major']
+      # Prisma client and CLI must move together, and a major is a migration
+      # exercise rather than a dependency bump.
+      - dependency-name: prisma
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@prisma/*'
+        update-types: ['version-update:semver-major']
+
+  # ---- GitHub Actions -----------------------------------------------------
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels: ['dependencies', 'ci']
+    commit-message:
+      prefix: 'ci(deps)'
+    groups:
+      actions:
+        patterns: ['*']
+
+  # ---- Docker base images in the production Dockerfiles -------------------
+  # deploy/Dockerfile.app pins node:24-bookworm-slim; deploy/Dockerfile.web
+  # pins node and nginxinc/nginx-unprivileged. A Node major here changes what
+  # the production image runs, so these are worth seeing.
+  - package-ecosystem: docker
+    directory: '/deploy'
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Etc/UTC
+    open-pull-requests-limit: 2
+    labels: ['dependencies', 'docker']
+    commit-message:
+      prefix: 'build(deps)'
