@@ -11,8 +11,13 @@ status page.
 * `docs/DECISIONS.md` — why the non-obvious things are the way they are.
 * `docs/HANDOVER.md` — setup, operation, and the deployment-facing requirements.
 * `docs/API.md` — the HTTP contract and the check/uptime/incident semantics.
+* `docs/ARCHITECTURE.md` — how the processes, stores and networks fit together.
+* `docs/DEVELOPMENT.md` — the contributor-facing setup and test commands.
+* `docs/SELF_HOSTING.md` — the community self-hosting path, built from source.
 * `docs/DEPLOYMENT.md` — the production architecture, the deploy pipeline, and
   the runbook for operating, rolling back, backing up and restoring it.
+* `docs/DATA_AND_PRIVACY.md` — what a running instance stores, and the
+  hosted-service Privacy/Terms gap.
 
 On a "continue" request: read those, then check `git status` and the actual code,
 then resume the next unfinished item in `docs/PROGRESS.md`. Do not restart
@@ -45,6 +50,11 @@ apps/web/           React + Vite SPA.
 packages/shared/    Types, zod schemas and product constants used by both sides.
 deploy/             Production deployment. Dockerfiles, Caddy and nginx config,
                     and the server-side deploy / rollback / backup scripts.
+  selfhost/         The COMMUNITY self-hosting stack: its own compose file,
+                    Caddyfile and .env.example. Builds from source; shares no
+                    file, volume, network or port with the two above.
+scripts/            dev-env-guard.mjs (the development mail guard) and
+                    verify-fresh-setup.sh.
 .github/workflows/  CI (lint, typecheck, unit, integration, build) and the
                     deploy pipeline that ships main to the production server.
 ```
@@ -59,7 +69,8 @@ npm run migrate:deploy           # apply committed migrations
 npm run migrate:dev              # create a migration after editing the schema
 npm run seed                     # demo data, all names prefixed [DEMO]
 
-npm run dev:api                  # API on :4000
+npm run dev:check                # the development mail guard, on its own
+npm run dev:api                  # API on :4000  (runs the guard first)
 npm run dev:worker               # scheduler + queue consumers (separate process)
 npm run dev:web                  # SPA on :5173, proxies /api to :4000
 
