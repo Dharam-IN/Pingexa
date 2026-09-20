@@ -1,0 +1,332 @@
+# ---------------------------------------------------------------------------
+# Pingexa — self-hosting stack.
+#
+# This is the community self-hosting path: everything is BUILT FROM THIS
+# SOURCE TREE, so it needs no container registry, no GitHub credentials, no
+# SSH access and no DNS belonging to anyone else. Run it from this directory:
+#
+#     cp .env.example .env         # then fill it in
+#     docker compose build
+#     docker compose --profile migrate run --rm migrate
+#     docker compose up -d
+#
+# The full guide is docs/SELF_HOSTING.md.
+#
+# It is NOT the maintainer's production stack. That one lives in
+# ../../docker-compose.prod.yml, pulls signed images from GHCR by immutable
+# commit SHA, and is driven by ../deploy.sh over SSH. The two share no file,
+# no volume, no network and no port, and nothing here changes how that one
+# behaves. It is also not ../../docker-compose.dev.yml, which provides only
+# backing services for working on the code.
+#
+# Properties this file is responsible for, and which are easy to lose in an
+# edit:
+#
+#  * Caddy is the only service that publishes a port. Postgres and Redis sit on
+#    a network marked `internal: true`, so they have no route to or from the
+#    internet and are reachable only from the other containers.
+#  * `api` and `worker` run the SAME image and differ only by `command`.
+#  * Migrations are a one-shot `migrate` service under a profile, so `up -d`
+#    can never start them. Run them yourself, and check they exited 0, before
+#    starting the application. A failed migration must not be an outage.
+#  * The worker needs `egress` as well as `backend`: `backend` has no gateway,
+#    so on it alone the worker could reach neither a monitored site nor your
+#    mail provider, and every check would fail.
+#  * Secrets come from `.env` beside this file, which is gitignored and is
+#    never copied into an image (`.dockerignore` excludes `.env*` from the
+#    build context).
+# ---------------------------------------------------------------------------
+name: pingexa-selfhost
+
+x-build-app: &build-app
+  context: ../..
+  dockerfile: deploy/Dockerfile.app
+  target: runtime
+
+x-app-env: &app-env
+  env_file:
+    - .env
+  environment:
+    # Bind inside the container. The port is never published; Caddy reaches the
+    # API over the `edge` network.
+    API_HOST: 0.0.0.0
+    API_PORT: '4000'
+    LOG_PRETTY: 'false'
+    # Surfaces on GET /api/health, so you can tell which build is running.
+    npm_package_version: ${PINGEXA_RELEASE:-selfhost}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
+
+services:
+  # ---- edge: the only public surface --------------------------------------
+  # One origin serves both the SPA and the API, because the browser calls /api
+  # on whatever origin served the page. That also keeps the session cookie
+  # first-party, which is why COOKIE_SAMESITE=Lax is correct here.
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      # host side is configurable so this can sit behind your own proxy, or on
+      # 80/443 directly. Container side is always 80/443.
+      - '${PINGEXA_HTTP_BIND:-127.0.0.1:8080}:80'
+      - '${PINGEXA_HTTPS_BIND:-127.0.0.1:8443}:443'
+    environment:
+      # Empty default means "plain HTTP on port 80, any hostname", which is what
+      # you want for a local trial or when your own reverse proxy terminates
+      # TLS. Set it to your domain to switch on automatic HTTPS.
+      PINGEXA_SITE_ADDRESS: ${PINGEXA_SITE_ADDRESS:-http://}
+      PINGEXA_TLS_DIRECTIVE: ${PINGEXA_TLS_DIRECTIVE:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and the ACME account key. Losing this volume means
+      # re-issuing certificates and burning Let's Encrypt rate limit.
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge
+    depends_on:
+      # service_started, not service_healthy: if the SPA container is unhealthy
+      # Caddy must still come up, so that TLS terminates, the API keeps
+      # answering and certificates keep renewing.
+      web:
+        condition: service_started
+      api:
+        condition: service_started
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:2019/config/']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+
+  # ---- the SPA ------------------------------------------------------------
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile.web
+    image: pingexa-selfhost-web:latest
+    restart: unless-stopped
+    networks:
+      - edge
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:8080/healthz']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    logging: *logging
+
+  # ---- API ----------------------------------------------------------------
+  api:
+    build: *build-app
+    image: pingexa-selfhost-app:latest
+    restart: unless-stopped
+    command: ['node', 'apps/api/dist/server.js']
+    <<: *app-env
+    networks:
+      # Both, because it answers Caddy and talks to Postgres and Redis.
+      - edge
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Liveness, not readiness: /api/health touches no dependency, so a Postgres
+    # blip cannot make Docker kill a healthy API. /api/ready is the one that
+    # tests dependencies — check it yourself after a deploy.
+    healthcheck:
+      test:
+        ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # The API drains in-flight requests and hard-exits at 15s.
+    stop_grace_period: 30s
+    security_opt: ['no-new-privileges:true']
+    logging: *logging
+
+  # ---- worker -------------------------------------------------------------
+  worker:
+    build: *build-app
+    image: pingexa-selfhost-app:latest
+    restart: unless-stopped
+    command: ['node', 'apps/api/dist/worker.js']
+    <<: *app-env
+    networks:
+      # `backend` for Postgres and Redis, `egress` for outbound checks and
+      # SMTP. NOT on `edge`, because it serves no HTTP.
+      #
+      # `egress` is load-bearing: `backend` is internal:true and has no
+      # gateway, so a worker on `backend` alone could reach neither a monitored
+      # site nor your mail provider. The SSRF guard is what keeps those
+      # outbound requests off private address space.
+      - backend
+      - egress
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # No HTTP endpoint by design. This only proves the process is alive; a
+    # wedged worker shows up as monitors reporting Unknown in the UI.
+    healthcheck:
+      test: ['CMD-SHELL', 'pgrep -f "apps/api/dist/worker.js" > /dev/null || exit 1']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    # Worker.close() waits for in-flight checks so a check in progress records
+    # its result instead of being abandoned; it hard-exits at 30s.
+    stop_grace_period: 45s
+    security_opt: ['no-new-privileges:true']
+    logging: *logging
+
+  # ---- migrations: one-shot, never started by `up` ------------------------
+  # Guarded by a profile so `docker compose up -d` cannot start it:
+  #
+  #     docker compose --profile migrate run --rm migrate
+  #
+  # It must exit 0 before you start or update api and worker. `prisma migrate
+  # deploy` applies committed migrations only — it never generates one, never
+  # resets, and is safe to re-run.
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/Dockerfile.app
+      target: migrate
+    image: pingexa-selfhost-migrate:latest
+    profiles: ['migrate']
+    restart: 'no'
+    env_file:
+      - .env
+    networks:
+      - backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt: ['no-new-privileges:true']
+    logging: *logging
+
+  # ---- data services: private, persistent ---------------------------------
+  postgres:
+    # A data directory initialised by 17 will not start under 18; that upgrade
+    # is a dump and restore, not an image bump. See docs/SELF_HOSTING.md.
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8'
+    volumes:
+      # Named volume: survives container recreation, image updates and
+      # `compose down`. It does NOT survive `docker volume rm`, so it is not a
+      # backup — see docs/SELF_HOSTING.md.
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - backend
+    # No `ports:`. Deliberately. Reach it with `docker compose exec postgres`.
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    stop_grace_period: 60s
+    security_opt: ['no-new-privileges:true']
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # noeviction is not a tuning choice: BullMQ silently loses jobs if Redis
+    # evicts job keys under memory pressure. appendonly keeps queued work
+    # across a restart. The password is read from the environment rather than
+    # interpolated into argv, so it does not show up in `docker inspect` or the
+    # host process list.
+    command:
+      - sh
+      - -c
+      - 'exec redis-server --appendonly yes --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    volumes:
+      - redisdata:/data
+    networks:
+      - backend
+    # No `ports:`. Deliberately.
+    healthcheck:
+      test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    stop_grace_period: 30s
+    security_opt: ['no-new-privileges:true']
+    logging: *logging
+
+  # ---- Mailpit: FOR TRYING PINGEXA OUT ONLY -------------------------------
+  # A fake SMTP server that accepts every message and delivers none of them. It
+  # lets you walk through signup, confirmation and an alert without wiring a
+  # real mail provider first.
+  #
+  #     docker compose --profile mailpit up -d
+  #
+  # NEVER leave this enabled on a real deployment: alerts would be captured
+  # here instead of reaching you, which for an uptime monitor is the same as
+  # not sending them at all.
+  mailpit:
+    image: axllent/mailpit:v1.28
+    profiles: ['mailpit']
+    restart: unless-stopped
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+      MP_MAX_MESSAGES: 500
+    ports:
+      # Web UI only, bound to loopback. The SMTP port is NOT published: the
+      # worker reaches it at mailpit:1025 over the container network.
+      - '${PINGEXA_MAILPIT_UI_BIND:-127.0.0.1:8125}:8025'
+    networks:
+      - egress
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+networks:
+  # Public-facing path: Caddy, the SPA and the API.
+  edge:
+    driver: bridge
+  # `internal: true` removes the gateway, so nothing on this network can reach
+  # the internet and nothing on the internet can reach it. This is what keeps
+  # Postgres and Redis private, not the absence of a `ports:` entry.
+  backend:
+    driver: bridge
+    internal: true
+  # Outbound only. The worker joins this to reach monitored sites and your SMTP
+  # provider; nothing publishes a port on it except the optional Mailpit UI.
+  egress:
+    driver: bridge
+
+volumes:
+  # Prefixed so they can never collide with the maintainer production stack
+  # (pingexa_pgdata) or the development stack (pingexa_dev_pgdata).
+  pgdata:
+    name: pingexa_selfhost_pgdata
+  redisdata:
+    name: pingexa_selfhost_redisdata
+  caddy_data:
+    name: pingexa_selfhost_caddy_data
+  caddy_config:
+    name: pingexa_selfhost_caddy_config
