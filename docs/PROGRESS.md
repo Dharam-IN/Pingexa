@@ -13,9 +13,165 @@ _Updated: 2026-09-20_
 | 5. Fresh-setup verification, final fixes, documentation | **Complete** |
 | 6. Light/dark theme support across the application | **Complete, verified** |
 | 7. Product experience upgrade | **Complete, verified locally** — branch `feat/product-experience`, not merged |
+| 8. Open-source and self-hosting readiness | **Complete, verified locally** — same branch, not merged |
 
 `docs/HANDOVER.md` §11 holds the full acceptance checklist with per-item
 evidence. This file is the short version plus the next action.
+
+## Open-source and self-hosting readiness (2026-09-20)
+
+On the same branch **`feat/product-experience`**, local only — **not pushed, not
+deployed.** No product behaviour changed: no endpoint, no schema, no migration,
+no change to authentication, CSRF, rate limits, scheduling, incident
+transitions, alert behaviour, the SSRF guard or the public/private data split.
+
+### Open-source readiness: READY
+
+**Secret audit — no real credential has ever been committed, on any ref.**
+
+* **Gitleaks 8.x** (`zricethezav/gitleaks`) over the full history
+  (`--log-opts="--all --full-history"`, 28 commits, 2.92 MB) and over the
+  tracked tree. One finding, the same line in both: a **deliberately-wrong test
+  password** in `apps/web/e2e/rateLimit.spec.ts:30`, used to drive the login
+  rate limiter. False positive.
+* **Targeted history checks** over every ref for Resend, SendGrid, AWS, GitHub,
+  Slack, Stripe, Google, Twilio, Mailgun and Postmark key shapes, JWTs, npm
+  tokens, Docker auth blocks, PEM private-key and certificate blocks, and
+  credential-bearing Postgres/Redis/SMTP URLs. Every hit resolved to a committed
+  **template placeholder** (`CHANGE_ME_…`, `replace-me-…`), a CI service
+  password, or a test fixture. One apparent Resend-key match was
+  `checks_failu`**`re_fields`**`_consistent` — a database constraint name.
+* **No `.env`, key, certificate, dump, cookie jar or log has ever been
+  committed.** The only env files in history are `.env.example` and
+  `deploy/.env.production.example`, both templates.
+* **No server IP anywhere.** Every IPv4 literal in the tree is loopback, an RFC
+  special-purpose range from the SSRF address-policy fixtures, a public
+  resolver, or `example.com`'s documented address.
+* **No third-party personal data.** Every address in the tree and in history is
+  a synthetic fixture (`*@monitored.dev`, `*@pingexa.local`). The repository
+  owner's own commit identity is present, as it is in any Git history.
+
+**Dependency licences — compatible with MIT.** The **shipped runtime image**
+carries **173 packages, all permissive**: 140 MIT, 18 ISC, 7 Apache-2.0, 2
+BSD-3-Clause, 1 BSD-2-Clause, 1 0BSD, 1 MIT-0, 1 "MIT AND ISC". Nothing
+copyleft, proprietary or unknown.
+
+`npm ls --omit=dev` reports two flags — `elkjs` (EPL-2.0) and `seq-queue`
+(unlicensed) — but both are reachable **only** through the `prisma` CLI, which
+is an optional peer of `@prisma/client`. The production image installs with
+`--omit=dev --omit=optional`, which removes that chain; confirmed by listing
+licences inside the built image, where neither appears. This is the same
+`devOptional` behaviour recorded in `docs/HANDOVER.md` §13 item 9.
+
+### What was added
+
+**Legal and community.** `LICENSE` (MIT, © 2026 Dharamraj Yadav),
+`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1),
+`SECURITY.md`, `SUPPORT.md`, `CHANGELOG.md`, `.github/CODEOWNERS`,
+`.github/PULL_REQUEST_TEMPLATE.md`, `.github/ISSUE_TEMPLATE/` (bug form, feature
+form, chooser config) and `.github/dependabot.yml`. `license` is declared in the
+root manifest and all three workspace manifests; the root also gained
+`repository`, `homepage`, `bugs`, `author` and `keywords`. Every package stays
+`private: true`.
+
+**An independent self-hosting path — `deploy/selfhost/`.** The existing
+`docker-compose.prod.yml` cannot serve a third party: it pulls images from the
+maintainer's GHCR namespace by immutable commit SHA, and `deploy.sh` expects
+`/opt/pingexa` and SSH. The new stack **builds every image from this source
+tree** using the existing Dockerfiles, and needs no registry account, no SSH, no
+ParthaVix DNS and no particular mail provider. Its own Caddyfile covers three
+deployments from one variable (public domain with Let's Encrypt, plain HTTP
+behind your own proxy, or a local certificate), and an opt-in `mailpit` profile
+lets the whole thing be rehearsed with no domain and no SMTP account. Volumes
+are prefixed `pingexa_selfhost_*`; **nothing in the maintainer production stack
+or the development stack was touched.**
+
+**Documentation.** `docs/ARCHITECTURE.md` (runtime topology, check flow,
+incident state machine, email outbox, public/private boundary — with Mermaid
+diagrams drawn from the code), `docs/DEVELOPMENT.md`, `docs/SELF_HOSTING.md`,
+and `docs/DATA_AND_PRIVACY.md`. `README.md` was rebuilt as a repository front
+page with five screenshots taken from the product-experience review captures
+(`docs/assets/screenshots/`, 596 kB total, all from the seeded `[DEMO]` account
+— no real address, URL, token or identifier appears in any of them).
+
+**One code change, and why it was needed.** `scripts/dev-env-guard.mjs` runs
+before `npm run dev:api` and `dev:worker` and refuses to start when the
+environment file the process is about to load points SMTP at anything other than
+a local mail catcher. It reads exactly one key (`SMTP_HOST`), never a secret,
+and exits 0 immediately when `NODE_ENV=production`, so `start:api`,
+`start:worker`, every Docker image and every Compose stack bypass it entirely.
+Overridable with `PINGEXA_ENV_FILE` or `PINGEXA_ALLOW_EXTERNAL_SMTP=1`, and
+available alone as `npm run dev:check`.
+
+This was not hypothetical: **the repository's untracked `.env` still holds the
+live Resend configuration from the 2026-09-16 delivery verification**, and the
+guard was confirmed to refuse it while accepting `.env.example` and
+`.env.review`. That file was not read beyond `SMTP_HOST`, not printed, not
+moved, not modified and not committed. `eslint.config.mjs` gained a block
+declaring Node globals for `scripts/**/*.mjs`.
+
+### Verification (2026-09-20)
+
+| Check | Result |
+|---|---|
+| Gitleaks, full history + tracked tree | 1 finding, a test password — false positive |
+| Targeted history scan, all refs | placeholders and fixtures only |
+| Dependency licences, shipped image | 173 packages, all permissive |
+| `npm run lint` | clean |
+| `npm run typecheck` | clean |
+| `npm run test:unit` | **249 passed** (API 152, web 97) |
+| `npm run test:integration` | **120 passed**, real Postgres + Redis |
+| `npm run build` | clean |
+| `docker compose config` × 3 stacks | all valid |
+| `caddy validate` × 3 site-address modes | all valid |
+| Self-hosting stack, built from source and run | **passed** — see below |
+
+**The self-hosting path was executed, not just written.** Images built from the
+source tree (app 545 MB, migrate 1.26 GB, web 74.8 MB), migrations applied as a
+one-shot container exiting 0, and the stack brought up with
+`NODE_ENV=production`, `COOKIE_SECURE=true` and `SMTP_REJECT_UNAUTHORIZED=true`
+behind Caddy on `https://localhost:8443` with a locally-issued certificate.
+
+| Property | Evidence |
+|---|---|
+| Health and readiness | `/api/health` reported the configured release; `/api/ready` → `{"database":true,"redis":true}` |
+| Single origin | `/` → SPA, `/app/monitors/x` → SPA fallback, `/api/*` → API, unknown `/api/…` → JSON 404 (not 401) |
+| Full signup flow | signup → confirmation mail in Mailpit → token redeemed → login → session, all over HTTPS |
+| Emailed links | carried `https://localhost:8443`, matching `PUBLIC_APP_URL` exactly |
+| Cold-browser write | first-ever `POST` without a CSRF cookie correctly refused; one safe `GET` then succeeded (D23) |
+| SSRF guard live in the image | loopback, `169.254.169.254`, RFC1918, a non-standard port and a non-HTTP scheme all refused |
+| Monitor rules | 3 created, 4th → `monitor_limit_reached`; new monitors `PENDING` with `uptimePercent: null`; paused → `PAUSED`, `nextCheckAt: null` |
+| Public status page | 32-hex slug, `Cache-Control: no-store`, a paused monitor reported as paused rather than an outage, and **no** URL, email, slug, status code or failure reason in the body |
+| Data services private | neither Postgres nor Redis publishes a port; DNS from inside the Postgres container fails (`internal: true` has no gateway) |
+| Worker egress | attached to both `backend` and `egress`; name resolution works from inside it |
+| Redis for BullMQ | `maxmemory-policy noeviction`, `appendonly yes`, auth required |
+| Data survives recreation | both data containers `rm -sf`'d and recreated; rows read back |
+| Backup and restore | `pg_dump -Fc` produced a 26 kB archive listing all eight tables plus `_prisma_migrations`; `pg_restore` into a throwaway database exited 0 and the rows read back |
+| Graceful shutdown | API and worker both logged a clean `SIGTERM` stop, well inside their grace periods |
+
+**No outbound HTTP request was made to any monitored website during this.** The
+worker was stopped for the monitor-CRUD portion, so monitor creation exercised
+only the guard's DNS resolution. Mailpit captured every message; Resend was
+never contacted, production was never contacted, and the live Pingexa domain was
+never contacted.
+
+### Still the owner's, in the GitHub UI
+
+None of these can be done from this repository, and none was attempted:
+enabling **private vulnerability reporting**, setting the repository
+description, homepage and topics, enabling Discussions, and confirming
+visibility. The exact `gh` commands and UI paths are in the handover summary for
+this work.
+
+### The hosted-service legal gap
+
+`https://pingexa.parthavix.com` collects email addresses, stores monitored URLs
+and check history, sends email and sets cookies, and **publishes no Privacy
+Policy, Terms of Service or cookie notice**. Verified by inspecting the eleven
+routes in `apps/web/src/App.tsx` and searching the whole tree. This does **not**
+block licensing or publishing the source. It is recorded openly, with a
+field-by-field data inventory for a qualified review to work from, in
+`docs/DATA_AND_PRIVACY.md`.
 
 ## Product experience upgrade (2026-09-20)
 
@@ -393,11 +549,21 @@ and belongs to the owner. It is listed as requirements, not blockers, in
 
 ## Exact next action
 
-The product-experience branch is complete and verified locally. It is **not
-pushed and not deployed**, and needs the owner's review before either.
+`feat/product-experience` now carries two bodies of work — the product
+experience upgrade and the open-source / self-hosting foundation. Both are
+complete and verified locally. Neither is pushed, merged or deployed, and both
+need the owner's review before either.
 
-1. Review `feat/product-experience` (see the section above), then merge and let
-   CI ship it.
+1. Review `feat/product-experience` (both sections above), then merge and let CI
+   ship it.
+2. **Do the GitHub-side setup** that cannot be done from this repository:
+   enable private vulnerability reporting, set the description, homepage and
+   topics, and decide on Discussions. Nothing about the repository's GitHub
+   metadata or settings was changed by this work.
+3. **Decide what to do about the hosted service's Privacy Policy and Terms**
+   before it takes public sign-ups. `docs/DATA_AND_PRIVACY.md` holds the data
+   inventory a qualified review needs. This does not block publishing the
+   source.
 
 The remaining items need the real server and cannot be done from this
 repository:
