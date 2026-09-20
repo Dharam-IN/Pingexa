@@ -14,8 +14,9 @@
   ],
   "scripts": {
     "postinstall": "npm run prisma:generate --silent && npm run build -w @pingexa/shared --silent",
-    "dev:api": "npm run dev -w @pingexa/api",
-    "dev:worker": "npm run dev:worker -w @pingexa/api",
+    "dev:check": "node scripts/dev-env-guard.mjs",
+    "dev:api": "node scripts/dev-env-guard.mjs && npm run dev -w @pingexa/api",
+    "dev:worker": "node scripts/dev-env-guard.mjs && npm run dev:worker -w @pingexa/api",
     "dev:web": "npm run dev -w @pingexa/web",
     "build": "npm run build -w @pingexa/shared && npm run build -w @pingexa/api && npm run build -w @pingexa/web",
     "start:api": "npm run start -w @pingexa/api",

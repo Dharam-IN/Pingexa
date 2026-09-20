@@ -59,6 +59,19 @@ export default tseslint.config(
     },
   },
   {
+    // Plain-JavaScript repository tooling: `scripts/*.mjs`. These are run
+    // directly by Node (not compiled, not bundled), so they need the Node
+    // globals that the TypeScript blocks above declare for their own files,
+    // and they report to the terminal on purpose.
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: { ...globals.node, ...globals.es2023 },
+    },
+    rules: {
+      'no-console': 'off',
+    },
+  },
+  {
     // Scripts and tests print to stdout on purpose.
     files: [
       '**/*.test.ts',
