@@ -91,7 +91,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.sha }}
 
@@ -104,9 +104,9 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: echo "IMAGE_NAMESPACE=${OWNER,,}" >> "$GITHUB_ENV"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -117,7 +117,7 @@ jobs:
       # built for the wrong architecture or libc fails at the first login
       # attempt, not at build time. This must match the production server.
       - name: Build and push the application image (API + worker)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.app
@@ -132,7 +132,7 @@ jobs:
           cache-to: type=gha,scope=app,mode=max
 
       - name: Build and push the migration image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.app
@@ -147,7 +147,7 @@ jobs:
           cache-to: type=gha,scope=migrate,mode=max
 
       - name: Build and push the web image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile.web
@@ -176,7 +176,7 @@ jobs:
       # image, so the server's copy is refreshed from the commit being deployed.
       # Nothing here contains a secret; .env.production stays on the server and
       # is never touched by this workflow.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.resolve.outputs.sha }}
 
