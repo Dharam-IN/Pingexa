@@ -1,0 +1,111 @@
+name: Feature request
+description: Suggest a capability Pingexa does not have yet.
+title: '[Feature]: '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Pingexa is deliberately narrow. The most useful thing you can tell the
+        maintainer is **the problem you have**, not the feature you want — a
+        good problem description often has a simpler answer than the feature
+        that prompted it.
+
+        Please check the [Roadmap](https://github.com/Dharam-IN/Pingexa#roadmap)
+        and the out-of-scope list below before filing.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched existing issues and did not find this one
+          required: true
+        - label: I have read the [Roadmap](https://github.com/Dharam-IN/Pingexa#roadmap) and the out-of-scope list
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: |
+        Describe the situation, not the solution. What goes wrong today, how
+        often, and what it costs you.
+      placeholder: |
+        My certificate expired over a weekend. Pingexa kept reporting the site
+        as UP right up to the moment it expired, then reported a TLS failure —
+        by which point customers had already seen the warning. I had no
+        advance notice.
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Who is this for, and how often does it come up?
+      description: |
+        Your own situation is fine. It helps to know whether this is a daily
+        annoyance or a once-a-year surprise, and whether it affects one monitor
+        or all of them.
+      placeholder: |
+        I run four small client sites with Let's Encrypt certificates renewed
+        by different tooling. This has bitten me twice in a year.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What do you do about it today?
+      description: How you work around it now, and why that is not good enough.
+    validations:
+      required: false
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like Pingexa to do?
+      description: |
+        Now the solution. Be concrete about the behaviour, and say what you
+        would be happy *not* to have — the smallest version that solves the
+        problem is the one most likely to be built.
+      placeholder: |
+        Record the certificate expiry date from the TLS handshake that each
+        check already performs, show it on the monitor detail page, and send
+        one email when it is within 14 days of expiring.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Other shapes this could take, and why you prefer yours.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: scope-check
+    attributes:
+      label: Scope check
+      description: |
+        These are explicitly out of scope for Pingexa and will not be built:
+        billing, plans, organisations or teams, custom status-page domains,
+        SMS, AI features, mobile apps, multi-region checks, and monitoring
+        protocols other than HTTP/HTTPS.
+      options:
+        - My request is not on that list
+        - My request is on that list, and I want to argue the case anyway
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Would you be willing to work on this?
+      options:
+        - 'Yes, with guidance on the approach'
+        - 'Yes, I would open a pull request'
+        - 'No, I am suggesting it only'
+    validations:
+      required: false

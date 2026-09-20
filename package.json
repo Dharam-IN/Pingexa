@@ -2,8 +2,29 @@
   "name": "pingexa",
   "private": true,
   "version": "1.0.0",
-  "description": "Pingexa \u2014 website uptime monitoring for developers and small site owners",
-  "license": "UNLICENSED",
+  "description": "Open-source uptime monitoring for websites and APIs, with incident alerts, response-time history, and public status pages.",
+  "license": "MIT",
+  "author": "Dharamraj Yadav (https://github.com/Dharam-IN)",
+  "homepage": "https://github.com/Dharam-IN/Pingexa#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dharam-IN/Pingexa.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Dharam-IN/Pingexa/issues"
+  },
+  "keywords": [
+    "uptime-monitoring",
+    "monitoring",
+    "status-page",
+    "self-hosted",
+    "devops",
+    "typescript",
+    "nodejs",
+    "react",
+    "postgresql",
+    "redis"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22.12"

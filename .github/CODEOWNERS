@@ -1,0 +1,39 @@
+# Code owners for Pingexa.
+#
+# @Dharam-IN is the sole maintainer, so the catch-all below already covers
+# every path. The explicit entries that follow exist so that the ownership of
+# the security-sensitive areas survives any future change to the catch-all —
+# and so that a pull request touching them is visibly a maintainer decision.
+#
+# The last matching pattern wins, so the narrow rules are listed after the
+# broad one.
+
+# Everything.
+*                               @Dharam-IN
+
+# Repository automation and community policy. A change here can alter what CI
+# runs, what secrets a workflow can reach, and who is asked to review.
+/.github/                       @Dharam-IN
+/.github/workflows/             @Dharam-IN
+/.github/CODEOWNERS             @Dharam-IN
+
+# Deployment: images, proxy configuration, and the scripts that run on a
+# server.
+/deploy/                        @Dharam-IN
+/docker-compose.prod.yml        @Dharam-IN
+/docker-compose.selfhost.yml    @Dharam-IN
+/docker-compose.dev.yml         @Dharam-IN
+/.dockerignore                  @Dharam-IN
+/scripts/                       @Dharam-IN
+
+# The outbound-request protections. There is no configuration path that can
+# weaken these, and there must never be one.
+/apps/api/src/monitoring/       @Dharam-IN
+/apps/api/src/config/           @Dharam-IN
+
+# Schema and committed migrations. Migrations are forward-only.
+/apps/api/prisma/               @Dharam-IN
+
+# Licensing and security policy.
+/LICENSE                        @Dharam-IN
+/SECURITY.md                    @Dharam-IN

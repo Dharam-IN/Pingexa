@@ -1,0 +1,43 @@
+# Pingexa issue chooser.
+#
+# blank_issues_enabled is true on purpose: the two forms above cover bugs and
+# feature requests, but a question about self-hosting or a documentation
+# correction fits neither, and forcing one of those shapes onto it is worse
+# than a blank issue.
+blank_issues_enabled: true
+
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Dharam-IN/Pingexa/security/advisories/new
+    about: >-
+      Never report a vulnerability in a public issue. Use GitHub's private
+      vulnerability reporting on the Security tab. If that page is not
+      available, read SECURITY.md for the fallback.
+
+  - name: Self-hosting guide
+    url: https://github.com/Dharam-IN/Pingexa/blob/main/docs/SELF_HOSTING.md
+    about: >-
+      Running your own Pingexa: requirements, secrets, SMTP, HTTPS, backups,
+      upgrades and troubleshooting. Most setup questions are answered here.
+
+  - name: Development setup
+    url: https://github.com/Dharam-IN/Pingexa/blob/main/docs/DEVELOPMENT.md
+    about: >-
+      Getting the stack running locally, the test suites, and how to keep
+      development mail inside Mailpit.
+
+  - name: Known limitations
+    url: https://github.com/Dharam-IN/Pingexa/blob/main/docs/HANDOVER.md#13-known-limitations
+    about: >-
+      Redirects are not followed, alert email is at-least-once, checks come
+      from one location. Please read this before filing a bug.
+
+  - name: How decisions were made
+    url: https://github.com/Dharam-IN/Pingexa/blob/main/docs/DECISIONS.md
+    about: >-
+      Why the non-obvious things are the way they are. Worth a look before
+      proposing a simplification.
+
+  - name: Getting help
+    url: https://github.com/Dharam-IN/Pingexa/blob/main/SUPPORT.md
+    about: Where to ask, what to include, and what response to expect.
