@@ -2,9 +2,10 @@
 # Continuous deployment to the EC2 server.
 #
 # Runs after CI succeeds on main (and can be started by hand from the Actions
-# tab). It SSHes in as the `deploy` user, moves the checkout at /opt/pingexa to
-# the exact commit CI tested, rebuilds and restarts the stack, and fails the run
-# if the API does not report ready. See docs/DEPLOYMENT.md.
+# tab). It checks out the exact commit CI tested, copies it to /opt/pingexa on
+# the server with rsync as the `deploy` user, rebuilds and restarts the stack
+# there, and fails the run if the API does not report ready. The server needs
+# no git and no GitHub access. See docs/DEPLOYMENT.md.
 #
 # Repository secrets:
 #   DEPLOY_HOST         EC2 public IP or hostname
@@ -45,7 +46,16 @@ jobs:
     environment:
       name: production
 
+    env:
+      # The commit CI tested, not whatever main points at by now.
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
     steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.SHA }}
+          persist-credentials: false
+
       - name: Set up SSH
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -61,12 +71,24 @@ jobs:
             ssh-keyscan -H "$HOST" > ~/.ssh/known_hosts
           fi
 
-      - name: Deploy
+      - name: Copy code to the server
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
-          # The commit CI tested, not whatever main points at by now.
-          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          # --delete removes files that no longer exist in the repo, so the
+          # server always matches this commit. .env.production lives only on
+          # the server and is excluded from both copying and deletion.
+          rsync -az --delete \
+            --exclude='.git/' \
+            --exclude='.env.production' \
+            -e "ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes" \
+            ./ "$USER@$HOST:/opt/pingexa/"
+
+      - name: Build and restart
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
         run: |
           ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$USER@$HOST" "bash -s" -- "$SHA" <<'REMOTE'
           set -euo pipefail
@@ -74,10 +96,8 @@ jobs:
           cd /opt/pingexa
           test -f .env.production || { echo "missing /opt/pingexa/.env.production" >&2; exit 1; }
 
-          echo "==> Updating code to $SHA"
-          git fetch --prune origin
-          # .env.production is gitignored, so this never touches it.
-          git reset --hard "$SHA"
+          # The network shared with the Caddy container. Created once.
+          docker network inspect caddy > /dev/null 2>&1 || docker network create caddy
 
           echo "==> Building and starting (migrations run first)"
           docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build --remove-orphans

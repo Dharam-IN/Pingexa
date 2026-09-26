@@ -56,7 +56,7 @@ deploy/             Production deployment. Dockerfiles, nginx config and the
 scripts/            dev-env-guard.mjs (the development mail guard) and
                     verify-fresh-setup.sh.
 .github/workflows/  CI (lint, typecheck, unit, integration, build) and deploy.yml,
-                    which SSHes to the server as `deploy` after CI passes on main.
+                    which rsyncs to the server as `deploy` after CI passes on main.
 ```
 
 ## Commands
@@ -237,10 +237,11 @@ monitoring protocols other than HTTP/HTTPS.
 
 **Production deployment is basic, and separate from the development stack.**
 It is `docker-compose.prod.yml` plus `deploy/`, documented in
-`docs/DEPLOYMENT.md`: the repo is cloned on one EC2 server and started with
-`docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`.
-`.github/workflows/deploy.yml` runs exactly that over SSH (as the `deploy` user)
-after CI passes on main. There is deliberately no image registry, rollback
+`docs/DEPLOYMENT.md`: after CI passes on main, `.github/workflows/deploy.yml`
+rsyncs the tested commit to `/opt/pingexa` on one EC2 server (as the `deploy`
+user) and runs
+`docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`
+there. The server has no git checkout and no GitHub access. There is deliberately no image registry, rollback
 script or backup script — do not reintroduce them unless asked. The rules:
 
 * **`docker-compose.dev.yml` is development-only and must not be touched by
