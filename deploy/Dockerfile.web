@@ -4,9 +4,8 @@
 #
 # The bundle is environment-independent on purpose: `apps/web/src/lib/api.ts`
 # falls back to an empty API base, so the browser calls `/api` on whatever
-# origin served the page. That means one image works on any hostname and can be
-# rolled back without a rebuild, and it is why Caddy fronts both this and the
-# API on a single origin.
+# origin served the page. That means one image works on any hostname, and it is
+# why Caddy fronts both this and the API on a single origin.
 #
 # VITE_SOURCEMAP=false switches off the source maps that are on everywhere else,
 # so the deployed bundle does not publish readable source.

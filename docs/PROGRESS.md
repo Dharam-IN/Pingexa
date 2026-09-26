@@ -573,13 +573,14 @@ repository:
    not readable. Issue a key with read access if delivery telemetry is wanted.
 2. ~~Build the production deployment.~~ **Done 2026-09-17**; see above and
    `docs/DEPLOYMENT.md`.
-3. **Provision the server and run the first deploy.** Work through
-   `docs/DEPLOYMENT.md` §2 in order: Docker, the `deploy` user, the SSH key,
-   the firewall, DNS for `pingexa.parthavix.com`, `.env.production`, GHCR
-   credentials, then §3 for the GitHub secrets. The first deploy needs
-   `SKIP_PUBLIC_CHECK=1` because no certificate exists yet.
-4. **Restore a backup once, deliberately** (`docs/DEPLOYMENT.md` §6) before
-   relying on it, and add the cron entry from §2.10.
+3. ~~Simplify the deployment.~~ **Done 2026-09-26.** The GHCR/SSH deploy
+   pipeline, `deploy.sh`, `rollback.sh`, `backup.sh` and the bundled Caddy were
+   removed. Production is now the repo cloned on an EC2 server, built there with
+   `docker compose ... up -d --build`, behind a shared Caddy container.
+   The deployment verification recorded above was for the removed pipeline.
+4. **Run the first deploy on the new EC2 server** by following
+   `docs/DEPLOYMENT.md`: `.env.production`, `up -d --build`, then the Caddy
+   site block in the shared Caddy container.
 5. **Set up an external check** on `https://pingexa.parthavix.com/api/health`
    from somewhere other than the server itself.
 

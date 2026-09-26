@@ -2,7 +2,7 @@
 # Continuous integration.
 #
 # Runs on every pull request and on every push to main. The deploy workflow
-# waits for this to succeed on main before it builds or ships anything, so this
+# waits for this to succeed on main before it ships anything, so this
 # is the gate that stands between a merge and production.
 #
 # The end-to-end suite is deliberately NOT here. It needs the whole stack

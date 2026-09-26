@@ -13,8 +13,8 @@
 # The full guide is docs/SELF_HOSTING.md.
 #
 # It is NOT the maintainer's production stack. That one lives in
-# ../../docker-compose.prod.yml, pulls signed images from GHCR by immutable
-# commit SHA, and is driven by ../deploy.sh over SSH. The two share no file,
+# ../../docker-compose.prod.yml and sits behind a separate, shared Caddy
+# container rather than bundling one. The two share no file,
 # no volume, no network and no port, and nothing here changes how that one
 # behaves. It is also not ../../docker-compose.dev.yml, which provides only
 # backing services for working on the code.

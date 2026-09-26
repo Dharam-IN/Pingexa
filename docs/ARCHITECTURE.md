@@ -547,12 +547,15 @@ no volume, no network and no port.
 | | `docker-compose.dev.yml` | `deploy/selfhost/docker-compose.yml` | `docker-compose.prod.yml` |
 |---|---|---|---|
 | For | working on the code | **anyone self-hosting** | the maintainer's server |
-| Images | none (app runs on the host) | **built from this source** | pulled from GHCR by `sha-<40 hex>` |
-| Provides | Postgres, Redis, Mailpit only | the whole stack + Caddy | the whole stack + Caddy |
-| Driven by | `npm run dev:*` | `docker compose` | `deploy/deploy.sh` over SSH |
+| Images | none (app runs on the host) | **built from this source** | built from this source, on the server |
+| Provides | Postgres, Redis, Mailpit only | the whole stack + Caddy | the whole stack; a shared Caddy container fronts it |
+| Driven by | `npm run dev:*` | `docker compose` | `docker compose up -d --build` |
 | Guide | [`DEVELOPMENT.md`](DEVELOPMENT.md) | [`SELF_HOSTING.md`](SELF_HOSTING.md) | [`DEPLOYMENT.md`](DEPLOYMENT.md) |
 
-The two full stacks share a shape, because the shape is what matters:
+The two full stacks share a shape, because the shape is what matters. (In
+`docker-compose.prod.yml` Caddy is not part of the stack: a separate, shared
+Caddy container reaches `web` and `api` over the external `caddy` network as
+`pingexa-web` / `pingexa-api`, and the stack publishes no port.)
 
 ```mermaid
 flowchart TB
@@ -573,10 +576,9 @@ flowchart TB
 ```
 
 **Migrations are a separate one-shot container** that must exit 0 before the API
-and worker are updated — never an entrypoint hook, never automatic at process
-start. A failed migration must leave the previous release serving rather than
-cause an outage. And migrations are **forward-only**: Prisma has no
-down-migrations, so a rollback restores code, not schema. Keep them additive;
+and worker start — never an entrypoint hook inside the app process. And
+migrations are **forward-only**: Prisma has no down-migrations, so checking out
+older code restores code, not schema. Keep them additive;
 remove a column in the change *after* the one that stopped using it.
 
 ---

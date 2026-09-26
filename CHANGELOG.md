@@ -15,6 +15,23 @@ landed on the default branch, not release dates.
 
 ## [Unreleased]
 
+### Changed — basic production deployment *(2026-09-26)*
+
+- Production is now deployed by cloning the repository on one server and running
+  `docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`.
+  Images are built on the server. A separate, shared Caddy container fronts
+  `web` and `api` over the external `caddy` network (as `pingexa-web` /
+  `pingexa-api`); the stack publishes no ports. `migrate` runs on every `up` and
+  `api`/`worker` wait for it to exit 0.
+
+### Removed
+
+- The GHCR image pipeline. `.github/workflows/deploy.yml` now just SSHes to the
+  server as `deploy` after CI passes on main and runs the same `up -d --build`.
+- The `deploy/deploy.sh`, `deploy/rollback.sh` and
+  `deploy/backup.sh` scripts.
+- The Caddy container and `deploy/Caddyfile` from the production stack.
+
 ### Added — open-source foundation
 
 Preparing the repository to be published and self-hosted by other people.

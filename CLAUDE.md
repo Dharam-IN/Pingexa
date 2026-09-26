@@ -48,15 +48,15 @@ apps/web/           React + Vite SPA.
                     `/app/monitors/:id` detail, `/app/settings`.
   e2e/              Playwright, against the whole running stack including Mailpit.
 packages/shared/    Types, zod schemas and product constants used by both sides.
-deploy/             Production deployment. Dockerfiles, Caddy and nginx config,
-                    and the server-side deploy / rollback / backup scripts.
+deploy/             Production deployment. Dockerfiles, nginx config and the
+                    .env.production template. Caddy runs in its own container.
   selfhost/         The COMMUNITY self-hosting stack: its own compose file,
                     Caddyfile and .env.example. Builds from source; shares no
                     file, volume, network or port with the two above.
 scripts/            dev-env-guard.mjs (the development mail guard) and
                     verify-fresh-setup.sh.
-.github/workflows/  CI (lint, typecheck, unit, integration, build) and the
-                    deploy pipeline that ships main to the production server.
+.github/workflows/  CI (lint, typecheck, unit, integration, build) and deploy.yml,
+                    which SSHes to the server as `deploy` after CI passes on main.
 ```
 
 ## Commands
@@ -82,7 +82,7 @@ npm run test:e2e                 # needs the whole stack running
 npm run build
 ```
 
-Production images (build and verify locally; CI is what ships them):
+Production images (build and verify locally; the server builds its own):
 
 ```bash
 docker build -f deploy/Dockerfile.app --target runtime -t pingexa-app:local .
@@ -235,40 +235,43 @@ Out of scope for this codebase: billing, plans, organisations or teams, custom
 status-page domains, SMS, AI features, mobile apps, multi-region checks, and
 monitoring protocols other than HTTP/HTTPS.
 
-**Production deployment now lives in this repository, and is separate from the
-development stack.** It is `deploy/` plus `docker-compose.prod.yml` plus
-`.github/workflows/`, documented in `docs/DEPLOYMENT.md`. The rules:
+**Production deployment is basic, and separate from the development stack.**
+It is `docker-compose.prod.yml` plus `deploy/`, documented in
+`docs/DEPLOYMENT.md`: the repo is cloned on one EC2 server and started with
+`docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build`.
+`.github/workflows/deploy.yml` runs exactly that over SSH (as the `deploy` user)
+after CI passes on main. There is deliberately no image registry, rollback
+script or backup script — do not reintroduce them unless asked. The rules:
 
 * **`docker-compose.dev.yml` is development-only and must not be touched by
   deployment work.** The two stacks share no file, no volume, no network and no
-  port. Nothing in the production stack may be made to serve a local workflow,
-  and nothing in the dev stack may be made to serve a server.
-* **Secrets never enter git or an image.** The only place production
-  configuration exists is `/opt/pingexa/.env.production` on the server, supplied
-  to containers with `env_file` at start time. `.dockerignore` excludes `.env*`
-  from every build context. Commit `deploy/.env.production.example`, never a
-  filled-in copy.
-* **Deploy the immutable `sha-<40 hex>` tag, never a moving tag.** Rollback works
-  by pinning a previous SHA; `main` cannot express that. `deploy.sh` refuses any
-  other tag shape.
-* **Migrations are a separate one-shot container that must exit 0 before the API
-  and worker are updated.** Never an entrypoint hook, never automatic at process
-  start. A failed migration must leave the previous release serving.
-* **Migrations are forward-only.** Prisma has no down-migrations, so rollback
-  restores code, not schema. Keep migrations additive and forward-compatible;
-  remove a column in the deploy *after* the one that stopped using it.
+  port.
+* **Caddy runs in its own container**, shared with other sites, and is not part
+  of this stack. `web` and `api` join the external `caddy` network as
+  `pingexa-web` / `pingexa-api`, and nothing in this stack publishes a port.
+  Keep the `pingexa-` prefix: bare `web`/`api` collide with other stacks on
+  that network.
+* **Secrets never enter git or an image.** Production configuration exists only
+  in `.env.production` in the checkout root on the server. `.dockerignore`
+  excludes `.env*` from every build context. Commit
+  `deploy/.env.production.example`, never a filled-in copy.
+* **Migrations are a separate one-shot container** that `api` and `worker`
+  depend on with `service_completed_successfully`. Never an entrypoint hook
+  inside the app process.
+* **Migrations are forward-only.** Prisma has no down-migrations, so checking
+  out older code restores code, not schema. Keep migrations additive; remove a
+  column in the release *after* the one that stopped using it.
 * **Postgres and Redis stay on the `internal: true` network and publish no
-  ports.** Caddy is the only service that publishes anything (80/443). The
-  worker needs `egress` as well as `backend` — on `backend` alone it has no
-  route out and every check fails.
-* **`TRUST_PROXY_HOPS` must equal the real number of proxies** (1 today: Caddy).
-  Too low and rate limits key on Caddy's address; too high and a client can
-  forge `X-Forwarded-For` and bypass them.
+  ports.** The worker needs `egress` as well as `backend` — on `backend` alone
+  it has no route out and every check fails.
+* **`TRUST_PROXY_HOPS` must equal the real number of proxies** (1: the Caddy
+  container). Too low and rate limits key on Caddy's address; too high and a client
+  can forge `X-Forwarded-For` and bypass them.
 
 Still out of scope, and still the owner's: provisioning servers, changing DNS,
 and anything involving Kubernetes, Terraform, ECS or a service mesh. **Do not
 run a deploy, publish anything, or change live infrastructure** — build and
-verify locally, and let CI ship it.
+verify locally, and let the deploy workflow ship it.
 
 ## Commit attribution
 
