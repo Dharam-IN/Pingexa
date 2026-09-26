@@ -1,10 +1,16 @@
 # Deployment
 
-Pingexa's production deployment is deliberately basic: one EC2 server, images
-built there with Docker Compose, and a **shared Caddy container** (one Caddy for
-every site on the server) in front. `.github/workflows/deploy.yml` copies the
-code to the server and (re)deploys it whenever CI passes on `main` — including
-the very first time. The server needs no git and no GitHub access. There is no image registry, no rollback script and no backup
+Pingexa's production deployment is deliberately basic: one EC2 server running
+Docker Compose, and a **shared Caddy container** (one Caddy for every site on
+the server) in front. `.github/workflows/deploy.yml` builds the images on the
+GitHub runner, streams them to the server, and (re)starts the stack whenever CI
+passes on `main` — including the very first time. The server holds only
+`docker-compose.prod.yml` and `.env.production`; it needs no git, no source
+tree, no registry and no GitHub access.
+
+**Never build the images on the server.** On a small instance the three
+parallel `npm ci` runs exhaust RAM and disk and make the machine unreachable,
+SSH included. That happened once; it is why the build moved to the runner. There is no image registry, no rollback script and no backup
 script.
 
 The files involved:
@@ -49,8 +55,8 @@ internet ──443──▶ caddy container ──┬── /api/* ──▶ pin
 * Docker Engine with the Compose plugin, and `git`.
 * Ports 22, 80 and 443 open in the EC2 security group (and `ufw`, if enabled).
 * A DNS A record for the Pingexa domain pointing at the server.
-* At least 2 GB RAM and ~6 GB free disk for the image build (add swap on a
-  small instance).
+* ~5 GB free disk for the images (about 1.9 GB) plus Postgres data; a 20 GB
+  volume is comfortable. 1 GB RAM runs the stack, but add 2 GB of swap.
 
 ## First deploy
 
@@ -82,11 +88,18 @@ Add the repository secrets listed under *Automatic deploys* below, then push to
 into `/opt/pingexa`, creates the `caddy` network if missing, and starts the
 stack.
 
-To run it by hand instead (from a copy of the code in `/opt/pingexa`):
+To run it by hand, build and ship from your machine (not on the server):
 
 ```bash
+docker build -f deploy/Dockerfile.app --target runtime -t pingexa-app:local .
+docker build -f deploy/Dockerfile.app --target migrate -t pingexa-migrate:local .
+docker build -f deploy/Dockerfile.web -t pingexa-web:local .
+docker save pingexa-app:local pingexa-migrate:local pingexa-web:local \
+  | gzip -1 | ssh deploy@<host> 'gunzip | docker load'
+scp docker-compose.prod.yml deploy@<host>:/opt/pingexa/
+# then, on the server, in /opt/pingexa:
 docker network create caddy   # once
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --no-build
 ```
 
 `--env-file` is required: it is what fills `${POSTGRES_USER}` etc. inside the
@@ -188,12 +201,14 @@ later release).
 to `main`, or when started by hand (Actions → Deploy → Run workflow). It:
 
 1. Checks out the exact commit CI tested.
-2. `rsync --delete` it to `/opt/pingexa` as the `deploy` user, excluding
-   `.git/` and `.env.production` (which is never copied, changed or deleted).
-3. Creates the `caddy` network if it does not exist.
-4. `docker compose ... up -d --build --remove-orphans` — builds, runs
-   migrations, restarts `api`, `worker` and `web`.
-5. Polls `/api/ready` from inside the `api` container for up to 2 minutes.
+2. Builds `pingexa-app`, `pingexa-migrate` and `pingexa-web` **on the runner**.
+3. Streams them to the server: `docker save | gzip | ssh … docker load`
+   (~300 MB), and copies `docker-compose.prod.yml` to `/opt/pingexa`.
+   `.env.production` is never touched.
+4. Creates the `caddy` network if it does not exist.
+5. `docker compose ... up -d --no-build --remove-orphans` — runs migrations,
+   then restarts `api`, `worker` and `web` on the new images.
+6. Polls `/api/ready` from inside the `api` container for up to 2 minutes.
    Ready → prunes dangling images and passes. Not ready → prints container
    status and logs and fails the run (there is no automatic rollback).
 

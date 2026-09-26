@@ -2,10 +2,14 @@
 # Continuous deployment to the EC2 server.
 #
 # Runs after CI succeeds on main (and can be started by hand from the Actions
-# tab). It checks out the exact commit CI tested, copies it to /opt/pingexa on
-# the server with rsync as the `deploy` user, rebuilds and restarts the stack
-# there, and fails the run if the API does not report ready. The server needs
-# no git and no GitHub access. See docs/DEPLOYMENT.md.
+# tab). It builds the three images HERE, on the GitHub runner, streams them to
+# the server over SSH with `docker save | docker load`, copies
+# docker-compose.prod.yml to /opt/pingexa, restarts the stack, and fails the run
+# if the API does not report ready. See docs/DEPLOYMENT.md.
+#
+# Never build on the server: three parallel `npm ci` runs exhausted a small
+# instance's RAM and disk and made it unreachable, SSH included. The server only
+# loads finished images. No registry, no git and no GitHub access needed there.
 #
 # Repository secrets:
 #   DEPLOY_HOST         EC2 public IP or hostname
@@ -56,6 +60,15 @@ jobs:
           ref: ${{ env.SHA }}
           persist-credentials: false
 
+      # Tags match the `image:` names in docker-compose.prod.yml, so compose uses
+      # them as-is. The runner is linux/amd64, like the server; the argon2
+      # native addon must match the server's architecture.
+      - name: Build images
+        run: |
+          docker build -f deploy/Dockerfile.app --target runtime -t pingexa-app:local .
+          docker build -f deploy/Dockerfile.app --target migrate -t pingexa-migrate:local .
+          docker build -f deploy/Dockerfile.web -t pingexa-web:local .
+
       - name: Set up SSH
         env:
           SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -71,21 +84,21 @@ jobs:
             ssh-keyscan -H "$HOST" > ~/.ssh/known_hosts
           fi
 
-      - name: Copy code to the server
+      - name: Send images and compose file to the server
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          # --delete removes files that no longer exist in the repo, so the
-          # server always matches this commit. .env.production lives only on
-          # the server and is excluded from both copying and deletion.
-          rsync -az --delete \
-            --exclude='.git/' \
-            --exclude='.env.production' \
-            -e "ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes" \
-            ./ "$USER@$HOST:/opt/pingexa/"
+          SSH="ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes -o ServerAliveInterval=30"
+          # ~300 MB compressed. Layers the server already has are skipped by
+          # `docker load`, but the stream itself is always the full set.
+          docker save pingexa-app:local pingexa-migrate:local pingexa-web:local \
+            | gzip -1 \
+            | $SSH "$USER@$HOST" 'gunzip | docker load'
+          # The only file the server needs. .env.production stays untouched.
+          scp -i ~/.ssh/deploy_key -o BatchMode=yes docker-compose.prod.yml "$USER@$HOST:/opt/pingexa/docker-compose.prod.yml"
 
-      - name: Build and restart
+      - name: Restart
         env:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
@@ -99,8 +112,10 @@ jobs:
           # The network shared with the Caddy container. Created once.
           docker network inspect caddy > /dev/null 2>&1 || docker network create caddy
 
-          echo "==> Building and starting (migrations run first)"
-          docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build --remove-orphans
+          echo "==> Starting (migrations run first)"
+          # --no-build: the images were just loaded. Building here is what
+          # took the server down once.
+          docker compose -f docker-compose.prod.yml --env-file .env.production up -d --no-build --remove-orphans
 
           echo "==> Waiting for /api/ready"
           # Asked from inside the api container: no port is published.
