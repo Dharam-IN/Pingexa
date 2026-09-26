@@ -1,267 +1,106 @@
 # ---------------------------------------------------------------------------
-# Build the production images and deploy them to the production server.
+# Continuous deployment to the EC2 server.
 #
-#   push to main -> CI passes -> build+push images -> SSH -> migrate -> update
-#   -> verify -> succeed, or roll back and fail.
+# Runs after CI succeeds on main (and can be started by hand from the Actions
+# tab). It SSHes in as the `deploy` user, moves the checkout at /opt/pingexa to
+# the exact commit CI tested, rebuilds and restarts the stack, and fails the run
+# if the API does not report ready. See docs/DEPLOYMENT.md.
 #
-# It waits for the CI workflow to conclude successfully on the same commit. A
-# red CI never reaches the build job, and the build job never reaches the
-# server. The deploy itself is ordered by deploy/deploy.sh on the server: the
-# migration must exit 0 before the API and worker are touched, so a failed
-# migration leaves the previous release serving rather than causing an outage.
-#
-# Images are tagged sha-<full commit>, which is immutable. The server pins that
-# exact tag, which is what makes `rollback.sh` able to go back to a specific
-# known-good release without a rebuild.
+# Repository secrets:
+#   DEPLOY_HOST         EC2 public IP or hostname
+#   DEPLOY_USER         deploy
+#   DEPLOY_SSH_KEY      private key whose public half is in
+#                       ~deploy/.ssh/authorized_keys on the server
+#   DEPLOY_KNOWN_HOSTS  optional; output of `ssh-keyscan <host>`. Without it the
+#                       host key is fetched at run time, which trusts the first
+#                       answer.
 # ---------------------------------------------------------------------------
 name: Deploy
 
 on:
   workflow_run:
-    workflows: ['CI']
+    workflows: [CI]
     types: [completed]
     branches: [main]
-  # Redeploy or roll forward to a specific commit by hand.
   workflow_dispatch:
-    inputs:
-      sha:
-        description: 'Full 40-character commit SHA to deploy (defaults to the current HEAD of main)'
-        required: false
-        type: string
-      # Only reachable by hand, and deliberately so. The automatic push-to-main
-      # path has no way to set it, so every ordinary deploy still has to prove
-      # the site answers publicly before it is allowed to succeed.
-      skip_public_check:
-        description: 'First deploy only: skip the public HTTPS check (DNS/certificate not ready yet)'
-        required: false
-        default: false
-        type: boolean
 
-# One deploy at a time. Never cancel one in flight: a deploy interrupted between
-# the migration and the container update leaves the stack half-updated.
+# One deploy at a time; a newer one waits rather than cancelling a half-done one.
 concurrency:
   group: deploy-production
   cancel-in-progress: false
 
 permissions:
   contents: read
-  packages: write
-
-env:
-  REGISTRY: ghcr.io
-  NODE_VERSION: '24'
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Establishes exactly which commit is being deployed, and refuses to continue
-  # if CI did not pass for it.
-  # ---------------------------------------------------------------------------
-  resolve:
-    name: Resolve commit
-    runs-on: ubuntu-latest
+  deploy:
+    name: Deploy to EC2
+    # Only after a successful CI run from a push to main, or a manual run.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
-    outputs:
-      sha: ${{ steps.pick.outputs.sha }}
-      tag: ${{ steps.pick.outputs.tag }}
-    steps:
-      - id: pick
-        env:
-          INPUT_SHA: ${{ inputs.sha }}
-          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
-          FALLBACK_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          SHA="${INPUT_SHA:-${RUN_SHA:-$FALLBACK_SHA}}"
-          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "::error::'$SHA' is not a full 40-character commit SHA"
-            exit 1
-          fi
-          echo "sha=$SHA"     >> "$GITHUB_OUTPUT"
-          echo "tag=sha-$SHA" >> "$GITHUB_OUTPUT"
-          echo "Deploying $SHA as sha-$SHA"
-
-  # ---------------------------------------------------------------------------
-  # Build and push the three production images.
-  # ---------------------------------------------------------------------------
-  build:
-    name: Build and push images
-    needs: resolve
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.resolve.outputs.sha }}
-
-      # A container repository name must be lowercase, but the GitHub owner
-      # login is not: `Dharam-IN` yields `ghcr.io/Dharam-IN/pingexa-app`, which
-      # the registry rejects. Resolve the namespace once, in lowercase, and use
-      # it for every tag below.
-      - name: Resolve the registry namespace
-        env:
-          OWNER: ${{ github.repository_owner }}
-        run: echo "IMAGE_NAMESPACE=${OWNER,,}" >> "$GITHUB_ENV"
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # linux/amd64 only, and deliberately so. `@node-rs/argon2` is a native
-      # addon resolved through per-platform optional dependencies; an image
-      # built for the wrong architecture or libc fails at the first login
-      # attempt, not at build time. This must match the production server.
-      - name: Build and push the application image (API + worker)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/Dockerfile.app
-          target: runtime
-          platforms: linux/amd64
-          push: true
-          provenance: false
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-app:${{ needs.resolve.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-app:main
-          cache-from: type=gha,scope=app
-          cache-to: type=gha,scope=app,mode=max
-
-      - name: Build and push the migration image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/Dockerfile.app
-          target: migrate
-          platforms: linux/amd64
-          push: true
-          provenance: false
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-migrate:${{ needs.resolve.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-migrate:main
-          cache-from: type=gha,scope=app
-          cache-to: type=gha,scope=migrate,mode=max
-
-      - name: Build and push the web image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/Dockerfile.web
-          platforms: linux/amd64
-          push: true
-          provenance: false
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-web:${{ needs.resolve.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/pingexa-web:main
-          cache-from: type=gha,scope=web
-          cache-to: type=gha,scope=web,mode=max
-
-  # ---------------------------------------------------------------------------
-  # Ship it.
-  # ---------------------------------------------------------------------------
-  deploy:
-    name: Deploy to production
-    needs: [resolve, build]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment:
       name: production
-      url: https://${{ vars.PINGEXA_DOMAIN }}
+
     steps:
-      # The compose file and the scripts are configuration, not part of an
-      # image, so the server's copy is refreshed from the commit being deployed.
-      # Nothing here contains a secret; .env.production stays on the server and
-      # is never touched by this workflow.
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.resolve.outputs.sha }}
-
-      # The host key is pinned rather than accepted on first use: without it,
-      # anything that can answer on that address could impersonate the server
-      # and receive the deploy.
-      - name: Configure SSH
+      - name: Set up SSH
         env:
-          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
-          SSH_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
-          set -euo pipefail
-          mkdir -p ~/.ssh && chmod 700 ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY"  > ~/.ssh/id_deploy
-          printf '%s\n' "$SSH_KNOWN_HOSTS"  > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/id_deploy ~/.ssh/known_hosts
-          cat > ~/.ssh/config <<EOF
-          Host production
-            HostName ${{ secrets.DEPLOY_HOST }}
-            User ${{ secrets.DEPLOY_USER }}
-            Port ${{ secrets.DEPLOY_PORT || 22 }}
-            IdentityFile ~/.ssh/id_deploy
-            IdentitiesOnly yes
-            StrictHostKeyChecking yes
-            ServerAliveInterval 30
-          EOF
-          chmod 600 ~/.ssh/config
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          if [ -n "$KNOWN_HOSTS" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            ssh-keyscan -H "$HOST" > ~/.ssh/known_hosts
+          fi
 
-      - name: Sync the stack definition to the server
-        run: |
-          set -euo pipefail
-          rsync -az --delete-after \
-            --exclude '.env.production' \
-            --exclude '.env.production.example' \
-            --exclude '.deploy.lock' \
-            docker-compose.prod.yml \
-            deploy/Caddyfile \
-            deploy/deploy.sh \
-            deploy/rollback.sh \
-            deploy/backup.sh \
-            production:/opt/pingexa/
-          ssh production 'chmod +x /opt/pingexa/*.sh'
-
-      # GHCR needs credentials on the server too, because the server is what
-      # pulls the images. A read-only PAT with `read:packages`; the workflow's
-      # own GITHUB_TOKEN is not valid outside the runner.
-      - name: Authenticate the server to GHCR
-        run: |
-          set -euo pipefail
-          printf '%s' '${{ secrets.GHCR_READ_TOKEN }}' \
-            | ssh production 'docker login ghcr.io -u ${{ secrets.GHCR_USERNAME }} --password-stdin'
-
-      # SKIP_PUBLIC_CHECK is '1' only when this run was dispatched by hand with
-      # the box ticked; on the workflow_run path `inputs` is empty, so it is '0'
-      # and deploy.sh verifies https://<domain> exactly as it always has.
       - name: Deploy
         env:
-          SKIP_PUBLIC_CHECK: ${{ inputs.skip_public_check && '1' || '0' }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          # The commit CI tested, not whatever main points at by now.
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
-          if [ "$SKIP_PUBLIC_CHECK" = "1" ]; then
-            echo "::warning::public HTTPS verification is being skipped for this run (first deploy)"
-          fi
-          ssh production \
-            "SKIP_PUBLIC_CHECK=$SKIP_PUBLIC_CHECK /opt/pingexa/deploy.sh ${{ needs.resolve.outputs.tag }}"
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes "$USER@$HOST" "bash -s" -- "$SHA" <<'REMOTE'
+          set -euo pipefail
+          SHA="$1"
+          cd /opt/pingexa
+          test -f .env.production || { echo "missing /opt/pingexa/.env.production" >&2; exit 1; }
 
-      # deploy.sh already rolls back on its own when verification fails. This
-      # exists for the cases it cannot catch itself — the SSH connection
-      # dropping mid-deploy, or the job being cancelled — where the stack may be
-      # left pointing at a release that was never verified.
-      - name: Roll back if the deploy did not complete
-        if: failure()
-        run: |
-          echo "::warning::deploy did not complete; attempting rollback"
-          ssh production '/opt/pingexa/rollback.sh' || \
-            echo "::error::automatic rollback failed — the server needs manual attention"
+          echo "==> Updating code to $SHA"
+          git fetch --prune origin
+          # .env.production is gitignored, so this never touches it.
+          git reset --hard "$SHA"
 
-      - name: Summary
+          echo "==> Building and starting (migrations run first)"
+          docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build --remove-orphans
+
+          echo "==> Waiting for /api/ready"
+          # Asked from inside the api container: no port is published.
+          for i in $(seq 1 30); do
+            if docker compose -f docker-compose.prod.yml --env-file .env.production exec -T api \
+                node -e "fetch('http://127.0.0.1:4000/api/ready').then(async r=>{console.log(await r.text());process.exit(r.ok?0:1)}).catch(()=>process.exit(1))"; then
+              echo
+              echo "==> Deployed $SHA"
+              docker image prune -f > /dev/null
+              exit 0
+            fi
+            sleep 4
+          done
+
+          echo "API not ready after 2 minutes" >&2
+          docker compose -f docker-compose.prod.yml --env-file .env.production ps -a
+          docker compose -f docker-compose.prod.yml --env-file .env.production logs --tail=50 migrate api worker
+          exit 1
+          REMOTE
+
+      - name: Remove SSH key
         if: always()
-        run: |
-          {
-            echo "### Deploy ${{ job.status }}"
-            echo ""
-            echo "| | |"
-            echo "|---|---|"
-            echo "| Commit | \`${{ needs.resolve.outputs.sha }}\` |"
-            echo "| Image tag | \`${{ needs.resolve.outputs.tag }}\` |"
-            echo "| URL | https://${{ vars.PINGEXA_DOMAIN }} |"
-          } >> "$GITHUB_STEP_SUMMARY"
+        run: rm -f ~/.ssh/deploy_key

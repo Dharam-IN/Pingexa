@@ -83,8 +83,8 @@ RUN npm run prisma:generate \
 # ---- runtime: the image the API and the worker run -------------------------
 FROM base AS runtime
 
-# Bind inside the container; the port is never published and Caddy reaches this
-# over the compose network. The default of 127.0.0.1 would be unreachable.
+# Bind inside the container; compose publishes it on the host loopback for
+# Caddy. The default of 127.0.0.1 would be unreachable from outside.
 ENV API_HOST=0.0.0.0 \
     API_PORT=4000 \
     LOG_PRETTY=false
@@ -139,7 +139,7 @@ RUN NODE_ENV=production \
 
 # Liveness only. /api/health deliberately touches no dependency, so a Postgres
 # or Redis blip cannot make the orchestrator kill a healthy process; readiness
-# (/api/ready) is what the deploy script verifies instead.
+# (/api/ready) is what to check after a deploy instead.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.API_PORT||4000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 

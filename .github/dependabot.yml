@@ -15,7 +15,7 @@
 #   * The base images in docker-compose.prod.yml, docker-compose.dev.yml and
 #     docker-compose.selfhost.yml (postgres, redis, caddy, mailpit). They are
 #     pinned to a major on purpose — a Postgres major bump is a dump and
-#     restore, not an image change (see docs/DEPLOYMENT.md §9) — and reviewing
+#     restore, not an image change — and reviewing
 #     that by hand is the right amount of friction.
 #   * Separate entries per workspace. npm workspaces share one lockfile;
 #     a second entry would produce duplicate pull requests.

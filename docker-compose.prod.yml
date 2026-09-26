@@ -1,177 +1,129 @@
 # ---------------------------------------------------------------------------
-# Pingexa — PRODUCTION stack for a single server.
+# Pingexa — PRODUCTION stack for a single server with Caddy on the host.
 #
 # This file is not the development stack. `docker-compose.dev.yml` provides only
-# backing services for local work and is unrelated to this one; nothing here is
-# safe to run on a developer machine and nothing there is safe to run on a
-# server.
+# backing services for local work and is unrelated to this one.
 #
-# Properties this file is responsible for, and which are easy to lose in an
-# edit:
+# How it fits on the server:
 #
-#  * Caddy is the only service that publishes a port. Postgres and Redis sit on
-#    a network marked `internal: true`, so they have no route to or from the
-#    internet and are reachable only from the other containers. Use
-#    `docker compose exec` to reach them, never a published port.
-#  * `api` and `worker` run the SAME image and differ only by `command`.
-#  * Migrations are a one-shot `migrate` service under a profile, so
-#    `up -d` can never start them. `deploy.sh` runs them with
-#    `compose run --rm migrate` and refuses to continue unless it exits 0.
-#  * Every image is pinned by immutable commit SHA through ${IMAGE_TAG}. A
-#    rollback is a change to that one variable — no rebuild.
+#  * Caddy runs in its OWN container (not in this stack) and serves many sites.
+#    `web` and `api` join the shared external `caddy` network under the aliases
+#    `pingexa-web` and `pingexa-api`, and Caddy proxies to those names. Nothing
+#    here publishes a port; create the network once with
+#    `docker network create caddy`.
+#  * Images are built on the server from this checkout:
+#        docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#  * `migrate` is a one-shot container. `api` and `worker` wait for it to exit
+#    0, so a failed migration keeps them from starting on a half-applied schema.
+#  * Postgres and Redis sit on a network marked `internal: true` and publish no
+#    ports. Use `docker compose exec` to reach them.
 #  * Secrets come from `.env.production` beside this file, which is never
 #    committed and never copied into an image.
 #
-# Operate it through `deploy/deploy.sh`; see `docs/DEPLOYMENT.md`.
+# See `docs/DEPLOYMENT.md`.
 # ---------------------------------------------------------------------------
 name: pingexa
-
-x-app-image: &app-image ${REGISTRY:-ghcr.io}/${IMAGE_REPO:?IMAGE_REPO is required}/pingexa-app:${IMAGE_TAG:?IMAGE_TAG is required}
 
 x-app-env: &app-env
   env_file:
     - .env.production
   environment:
-    # Bind inside the container. The port is never published; Caddy reaches the
-    # API over the `edge` network.
     API_HOST: 0.0.0.0
     API_PORT: '4000'
     NODE_ENV: production
     LOG_PRETTY: 'false'
-    # Surfaces the deployed image tag on GET /api/health, which is how a deploy
-    # is verified to have actually taken effect. The API reads this variable for
-    # its version string.
-    npm_package_version: ${IMAGE_TAG}
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '5'
 
 services:
-  # ---- edge: the only public surface -------------------------------------
-  caddy:
-    image: caddy:2.10-alpine
-    restart: unless-stopped
-    ports:
-      - '80:80'
-      - '443:443'
-      - '443:443/udp'
-    environment:
-      PINGEXA_DOMAIN: ${PINGEXA_DOMAIN:?PINGEXA_DOMAIN is required}
-      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      # Certificates and ACME account keys. Losing this volume means re-issuing
-      # certificates and burning Let's Encrypt rate limit.
-      - caddy_data:/data
-      - caddy_config:/config
-    networks:
-      - edge
-    depends_on:
-      # Deliberately service_started, not service_healthy: if the SPA container
-      # is unhealthy, Caddy must still come up so that TLS terminates, the API
-      # keeps answering and certificates keep renewing. Gating on web health
-      # would turn a frontend problem into a total outage.
-      web:
-        condition: service_started
-      api:
-        condition: service_started
-    healthcheck:
-      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:2019/config/']
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
   # ---- the SPA -----------------------------------------------------------
   web:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_REPO:?IMAGE_REPO is required}/pingexa-web:${IMAGE_TAG:?IMAGE_TAG is required}
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.web
+    image: pingexa-web:local
     restart: unless-stopped
     networks:
-      - edge
-    healthcheck:
-      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:8080/healthz']
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
+      # Caddy proxies everything that is not /api/* to pingexa-web:8080.
+      caddy:
+        aliases: [pingexa-web]
+    logging: *logging
 
   # ---- API ---------------------------------------------------------------
   api:
-    image: *app-image
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.app
+      target: runtime
+    image: pingexa-app:local
     restart: unless-stopped
     command: ['node', 'apps/api/dist/server.js']
     <<: *app-env
     networks:
-      # Both, because it answers Caddy and talks to Postgres and Redis.
-      - edge
-      - backend
+      # Caddy proxies /api/* to pingexa-api:4000. Caddy is the one proxy in
+      # front of the API, so TRUST_PROXY_HOPS=1. `backend` for Postgres/Redis.
+      caddy:
+        aliases: [pingexa-api]
+      backend: {}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # Liveness, not readiness: /api/health touches no dependency, so a Postgres
-    # blip cannot make Docker declare a healthy API unhealthy. deploy.sh checks
-    # /api/ready separately, which is the one that does test dependencies.
-    healthcheck:
-      test:
-        ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
-    # The API closes the listener, drains in-flight requests and hard-exits at
-    # 15s; docs/HANDOVER.md asks for at least 20s.
+    # The API drains in-flight requests and hard-exits at 15s.
     stop_grace_period: 30s
     security_opt: ['no-new-privileges:true']
-    logging: &logging
-      driver: json-file
-      options:
-        max-size: '10m'
-        max-file: '5'
+    logging: *logging
 
   # ---- worker ------------------------------------------------------------
   worker:
-    image: *app-image
+    image: pingexa-app:local
     restart: unless-stopped
     command: ['node', 'apps/api/dist/worker.js']
     <<: *app-env
     networks:
-      # `backend` for Postgres and Redis, `egress` for the outbound monitoring
-      # checks and SMTP. It is NOT on `edge`, because it serves no HTTP.
-      #
       # `egress` is load-bearing: `backend` is internal:true and has no gateway,
-      # so a worker on `backend` alone could reach neither a monitored site nor
-      # the mail provider, and every check would fail. The SSRF guard is what
-      # keeps those outbound requests off private address space.
+      # so without it the worker could reach neither a monitored site nor the
+      # mail provider and every check would fail. The SSRF guard is what keeps
+      # those outbound requests off private address space.
       - backend
       - egress
     depends_on:
+      # `api` builds the shared image; waiting on it also waits on `migrate`.
+      api:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    # No HTTP endpoint by design (docs/HANDOVER.md §6). This only proves the
-    # process is alive; a wedged worker is detected by the absence of
-    # "dispatched due checks" log lines and by monitors reporting
-    # monitoringStale, not from here.
     healthcheck:
       test: ['CMD-SHELL', 'pgrep -f "apps/api/dist/worker.js" > /dev/null || exit 1']
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 20s
-    # Worker.close() waits for in-flight checks so a check in progress records
-    # its result instead of being abandoned; it hard-exits at 30s and
-    # docs/HANDOVER.md asks for at least 35s of grace.
+    # Worker.close() waits for in-flight checks and hard-exits at 30s.
     stop_grace_period: 45s
     security_opt: ['no-new-privileges:true']
     logging: *logging
 
-  # ---- migrations: one-shot, never started by `up` ------------------------
-  # Guarded by a profile so `docker compose up -d` cannot start it. Run it with
-  # `docker compose --profile migrate run --rm migrate`, which deploy.sh does
-  # before it touches api or worker.
+  # ---- migrations: one-shot, runs on every `up` and exits ------------------
+  # `prisma migrate deploy` applies committed migrations only and skips ones
+  # already applied, so running it on every start is safe.
   migrate:
-    image: ${REGISTRY:-ghcr.io}/${IMAGE_REPO:?IMAGE_REPO is required}/pingexa-migrate:${IMAGE_TAG:?IMAGE_TAG is required}
-    profiles: ['migrate']
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.app
+      target: migrate
+    image: pingexa-migrate:local
     restart: 'no'
     env_file:
       - .env.production
@@ -186,8 +138,7 @@ services:
   # ---- data services: private, persistent --------------------------------
   postgres:
     # Pinned to the same major as development. A data directory initialised by
-    # 17 will not start under 18; that upgrade is a dump and restore, not an
-    # image bump.
+    # 17 will not start under 18; that upgrade is a dump and restore.
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
@@ -196,13 +147,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
       POSTGRES_INITDB_ARGS: '--encoding=UTF8'
     volumes:
-      # Named volume: survives container recreation, image updates and
-      # `compose down`. It does NOT survive `docker volume rm`, so it is not a
-      # backup — see deploy/backup.sh.
+      # Survives container recreation and `compose down`, but not
+      # `docker volume rm` or a lost disk. It is not a backup.
       - pgdata:/var/lib/postgresql/data
     networks:
       - backend
-    # No `ports:`. Deliberately. Reach it with `docker compose exec postgres`.
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
       interval: 10s
@@ -217,43 +166,39 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     # noeviction is not a tuning choice: BullMQ silently loses jobs if Redis
-    # evicts job keys under memory pressure. appendonly keeps queued work across
-    # a restart — recoverable without it, but a restart would drop a batch.
-    # Read through the environment rather than interpolated into argv, so the
-    # password does not show up in `docker inspect` or the host process list.
+    # evicts job keys under memory pressure. The password is read from the
+    # environment so it does not show up in `docker inspect` argv.
     command:
       - sh
       - -c
       - 'exec redis-server --appendonly yes --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD"'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     volumes:
       - redisdata:/data
     networks:
       - backend
-    # No `ports:`. Deliberately.
     healthcheck:
       test: ['CMD-SHELL', 'redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG']
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 10s
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     stop_grace_period: 30s
     security_opt: ['no-new-privileges:true']
     logging: *logging
 
 networks:
-  # Public-facing path: Caddy, the SPA and the API.
-  edge:
-    driver: bridge
-  # `internal: true` removes the gateway, so nothing on this network can reach
-  # the internet and nothing on the internet can reach it. This is what keeps
-  # Postgres and Redis private, not the absence of a `ports:` entry.
+  # Shared with the Caddy container and other sites. Aliases are prefixed with
+  # `pingexa-` because plain `web`/`api` would collide with other stacks here.
+  caddy:
+    external: true
+  # `internal: true` removes the gateway: nothing here can reach the internet
+  # and nothing on the internet can reach it.
   backend:
     driver: bridge
     internal: true
-  # Outbound only. The worker joins this to reach monitored sites and the SMTP
-  # provider; nothing publishes a port on it.
+  # Outbound only, for the worker's checks and SMTP.
   egress:
     driver: bridge
 
@@ -262,7 +207,3 @@ volumes:
     name: pingexa_pgdata
   redisdata:
     name: pingexa_redisdata
-  caddy_data:
-    name: pingexa_caddy_data
-  caddy_config:
-    name: pingexa_caddy_config
