@@ -575,8 +575,10 @@ repository:
    `docs/DEPLOYMENT.md`.
 3. ~~Simplify the deployment.~~ **Done 2026-09-26.** The GHCR/SSH deploy
    pipeline, `deploy.sh`, `rollback.sh`, `backup.sh` and the bundled Caddy were
-   removed. The Deploy workflow now rsyncs the tested commit to an EC2 server and
-   runs `docker compose ... up -d --build` there, behind a shared Caddy container.
+   removed. The Deploy workflow now builds images on the GitHub runner, ships
+   them to an EC2 server with `docker save | docker load`, and runs
+   `up -d --no-build` there, behind a shared Caddy container. (Building on the
+   server was tried first and made a small instance unreachable.)
    The deployment verification recorded above was for the removed pipeline.
 4. **Run the first deploy on the new EC2 server** by following
    `docs/DEPLOYMENT.md`: `deploy` user, `.env.production`, GitHub secrets, push,

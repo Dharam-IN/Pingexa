@@ -11,8 +11,10 @@
 #    `pingexa-web` and `pingexa-api`, and Caddy proxies to those names. Nothing
 #    here publishes a port; create the network once with
 #    `docker network create caddy`.
-#  * Images are built on the server from this checkout:
-#        docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#  * Images are built on the GitHub runner and loaded onto the server by
+#    .github/workflows/deploy.yml, which then runs `up -d --no-build`. Never
+#    build on the server: it exhausted a small instance's RAM and disk. The
+#    `build:` sections below are for building locally.
 #  * `migrate` is a one-shot container. `api` and `worker` wait for it to exit
 #    0, so a failed migration keeps them from starting on a half-applied schema.
 #  * Postgres and Redis sit on a network marked `internal: true` and publish no
