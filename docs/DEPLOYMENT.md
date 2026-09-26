@@ -1,10 +1,10 @@
 # Deployment
 
-Pingexa's production deployment is deliberately basic: one EC2 server, the
-repository checked out on it, images built there with Docker Compose, and a
-**shared Caddy container** (one Caddy for every site on the server) in front. After the first manual
-deploy, `.github/workflows/deploy.yml` redeploys automatically whenever CI
-passes on `main`. There is no image registry, no rollback script and no backup
+Pingexa's production deployment is deliberately basic: one EC2 server, images
+built there with Docker Compose, and a **shared Caddy container** (one Caddy for
+every site on the server) in front. `.github/workflows/deploy.yml` copies the
+code to the server and (re)deploys it whenever CI passes on `main` — including
+the very first time. The server needs no git and no GitHub access. There is no image registry, no rollback script and no backup
 script.
 
 The files involved:
@@ -54,28 +54,20 @@ internet ──443──▶ caddy container ──┬── /api/* ──▶ pin
 
 ## First deploy
 
-### 1. The shared network (once per server)
+### 1. Server setup (once)
+
+As a sudo user:
 
 ```bash
-docker network create caddy
+sudo adduser --disabled-password --gecos "" deploy
+sudo usermod -aG docker deploy
+sudo mkdir -p /opt/pingexa && sudo chown deploy:deploy /opt/pingexa
 ```
 
-### 2. Pingexa
-
-`git clone` needs an empty directory. If `/opt/pingexa` already holds
-`.env.production`, clone in place instead:
-
-```bash
-cd /opt/pingexa
-git init -b main
-git remote add origin <repo-url>
-git fetch origin
-git checkout -t origin/main
-```
-
-Otherwise `git clone <repo-url> /opt/pingexa`, then
-`cp deploy/.env.production.example .env.production && chmod 600 .env.production`
-and fill in every CHANGE ME.
+As `deploy`: put the CD public key in `~/.ssh/authorized_keys`
+(`chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys`), and create
+`/opt/pingexa/.env.production` from `deploy/.env.production.example`
+(`chmod 600`), filling in every CHANGE ME.
 
 Generate secrets with `openssl rand -hex 32` (Postgres and Redis passwords; hex
 because `/`, `+` and `=` break the URLs — use the same value inside
@@ -83,7 +75,17 @@ because `/`, `+` and `=` break the URLs — use the same value inside
 Set `PUBLIC_APP_URL` and `TRUSTED_ORIGINS` to `https://<your-domain>`; the API
 refuses to boot if `TRUSTED_ORIGINS` does not contain `PUBLIC_APP_URL`.
 
+### 2. GitHub secrets, then push
+
+Add the repository secrets listed under *Automatic deploys* below, then push to
+`main` (or run Actions → Deploy → Run workflow). The workflow copies the code
+into `/opt/pingexa`, creates the `caddy` network if missing, and starts the
+stack.
+
+To run it by hand instead (from a copy of the code in `/opt/pingexa`):
+
 ```bash
+docker network create caddy   # once
 docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
 ```
 
@@ -170,31 +172,28 @@ the email, and add a monitor.
 
 ## Updating
 
-```bash
-cd /opt/pingexa
-git pull
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
-```
-
-Migrations run automatically before the API and worker restart. If one fails,
+Push to `main`. Once CI passes, the Deploy workflow ships that commit.
+Migrations run automatically before the API and worker restart; if one fails,
 `api` and `worker` are not started on the new code — check
 `docker compose ... logs migrate`.
 
-To go back to an older version, `git checkout <commit>` and run the same `up -d
---build`. That restores code only: Prisma has no down-migrations, so keep
-migrations additive (add columns; drop them only in a later release).
+To go back to an older version, revert the commit and push (or run the Deploy
+workflow by hand on an older commit). That restores code only: Prisma has no
+down-migrations, so keep migrations additive (add columns; drop them only in a
+later release).
 
 ## Automatic deploys (GitHub Actions)
 
 `.github/workflows/deploy.yml` runs when the **CI** workflow succeeds on a push
 to `main`, or when started by hand (Actions → Deploy → Run workflow). It:
 
-1. SSHes to the server as the `deploy` user.
-2. `git fetch` + `git reset --hard <sha>` in `/opt/pingexa` — the exact commit
-   CI tested. `.env.production` is gitignored, so it is left alone.
-3. `docker compose ... up -d --build --remove-orphans` — builds, runs
+1. Checks out the exact commit CI tested.
+2. `rsync --delete` it to `/opt/pingexa` as the `deploy` user, excluding
+   `.git/` and `.env.production` (which is never copied, changed or deleted).
+3. Creates the `caddy` network if it does not exist.
+4. `docker compose ... up -d --build --remove-orphans` — builds, runs
    migrations, restarts `api`, `worker` and `web`.
-4. Polls `/api/ready` from inside the `api` container for up to 2 minutes.
+5. Polls `/api/ready` from inside the `api` container for up to 2 minutes.
    Ready → prunes dangling images and passes. Not ready → prints container
    status and logs and fails the run (there is no automatic rollback).
 
@@ -202,19 +201,8 @@ Only one deploy runs at a time.
 
 ### One-time setup
 
-On the server:
-
-```bash
-sudo usermod -aG docker deploy          # run docker without sudo (re-login after)
-sudo chown -R deploy:deploy /opt/pingexa
-```
-
-The `deploy` user must be able to `git fetch` the repository. For a private
-repo, create a key as `deploy` (`ssh-keygen -t ed25519`) and add its public half
-to GitHub → repo → Settings → Deploy keys (read-only), and clone with the SSH
-URL.
-
-For GitHub to log in, create a second key pair (on your machine), put the
+The server side is *First deploy → 1* above. For GitHub to log in, create a key
+pair (on your machine: `ssh-keygen -t ed25519 -f pingexa_deploy`), put the
 public half in `/home/deploy/.ssh/authorized_keys`, and add these repository
 secrets (Settings → Secrets and variables → Actions):
 

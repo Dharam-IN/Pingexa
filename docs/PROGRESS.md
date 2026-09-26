@@ -575,12 +575,12 @@ repository:
    `docs/DEPLOYMENT.md`.
 3. ~~Simplify the deployment.~~ **Done 2026-09-26.** The GHCR/SSH deploy
    pipeline, `deploy.sh`, `rollback.sh`, `backup.sh` and the bundled Caddy were
-   removed. Production is now the repo cloned on an EC2 server, built there with
-   `docker compose ... up -d --build`, behind a shared Caddy container.
+   removed. The Deploy workflow now rsyncs the tested commit to an EC2 server and
+   runs `docker compose ... up -d --build` there, behind a shared Caddy container.
    The deployment verification recorded above was for the removed pipeline.
 4. **Run the first deploy on the new EC2 server** by following
-   `docs/DEPLOYMENT.md`: `.env.production`, `up -d --build`, then the Caddy
-   site block in the shared Caddy container.
+   `docs/DEPLOYMENT.md`: `deploy` user, `.env.production`, GitHub secrets, push,
+   then the Caddy site block in the shared Caddy container.
 5. **Set up an external check** on `https://pingexa.parthavix.com/api/health`
    from somewhere other than the server itself.
 
